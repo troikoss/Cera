@@ -2,6 +2,9 @@
 
 mod application;
 mod canvas;
+mod note;
+mod palm;
+mod swatch;
 mod window;
 
 use std::io::IsTerminal;

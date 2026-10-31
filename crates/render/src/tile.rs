@@ -17,7 +17,7 @@ pub type DocId = u32;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Layer {
     Pdf,
-    // Ink arrives in M4.
+    Ink,
 }
 
 /// Device pixels per point. Stored as bits so it can be part of a hashed key; tiles are

@@ -45,7 +45,7 @@ Versions checked 2026-10-31.
 | GNOME widgets | `libadwaita` (as `adw`) | 0.9.2 | feature `v1_7` for `AdwToggleGroup`, `AdwWrapBox` (system has 1.9.1) |
 | PDF | `poppler-rs` | 0.26.0 | binds poppler-glib; uses cairo-rs/glib 0.22, same as gtk4 0.11 |
 | 2D raster | `cairo-rs` (via `gtk4::cairo`) | 0.22 | strokes and Poppler share one rasteriser (pixman has NEON paths on ARM) |
-| Spatial index | `rstar` | 0.13 | per-page R-tree of stroke bounding boxes (eraser, lasso, tile invalidation) |
+| Spatial index | — | — | none yet: a linear scan of stroke bounds takes 4.7 µs for a 3000-stroke page on the tablet, so `rstar` waits until lasso or huge pages need it |
 | File access | `memmap2`, `crc32fast` | latest | mmap the note file; checksum chunks |
 | Manifest encoding | `serde` + `postcard` | latest | compact, versioned |
 | Threads | `std::thread` + `async-channel` | latest | results awaited on the GTK main loop with `glib::spawn_future_local` |
@@ -126,7 +126,9 @@ The canvas is a custom widget implementing `GtkScrollable` inside a `GtkScrolled
   A `gdk::MemoryTexture` keeps its CPU buffer, which is what the budget counts; GSK's GPU copies
   of recently drawn tiles come on top (the same memory on the tablet).
 - No retained cairo surfaces: a tile is rendered, turned into a `gdk::MemoryTexture`, and the
-  buffer handed over. An ink edit re-renders affected tiles from the R-tree query (a few ms).
+  buffer handed over. An ink edit marks the tiles it touches stale (they stay on screen) and
+  asks for them again; tiles carry the page's ink generation, so one drawn before a later edit
+  is never mistaken for current.
 - `gio::MemoryMonitor` low-memory warnings drop everything except visible tiles.
 - Inactive tabs release all their tiles; their strokes stay (they're small).
 
@@ -136,21 +138,39 @@ previous zoom level's tiles while the new ones render.
 
 ### Wet ink (low-latency drawing)
 
-- One viewport-sized RGBA buffer (16 MiB at 2560 × 1600). M4 may tile it so only the tiles a
-  stroke touches are allocated.
-- Each motion event draws only the new segment into it with cairo.
-- The texture is rebuilt with `gdk::MemoryTextureBuilder::set_update_texture` +
-  `set_update_region` (GTK ≥ 4.16), so the renderer uploads only the dirty rectangle per frame.
-- On pen-up: simplify (Ramer–Douglas–Peucker, ε ≈ 0.05 pt, pressure-aware), insert into model
-  and R-tree, request re-render of the touched ink tiles. The wet-ink pixels stay visible until
-  those tiles arrive, then that region is cleared — no flicker.
+Code: `crates/app/src/canvas/wet.rs`.
+
+- Tiled, on the same 256 px grid as the ink tiles, so only tiles the stroke touches exist
+  (a full-screen buffer would be 16 MiB, and copying it for every frame's texture too slow).
+- Each motion event clears the small pixel-aligned box its new samples touch and redraws the
+  stroke's shapes there in one fill, using the render workers' geometry. Wet and finished
+  pixels are therefore identical (test: alpha within 2/255); drawing every segment separately
+  would add antialiasing coverage at the edges and make wet ink look bolder. One event costs
+  ~26 µs on the tablet.
+- Dirty wet tiles become new 256 KiB textures once per event; GTK already limits motion events
+  to about one per frame, so `snapshot` only appends textures. (No `set_update_region`: a
+  tile is small enough to upload whole.)
+- Translucent strokes are drawn opaque into the wet tiles and shown with a group opacity, which
+  matches one translucent fill.
+- On pen-up: simplify (Ramer–Douglas–Peucker, 0.05 pt, pressure 0.03), add through `History`,
+  mark the touched ink tiles stale. The wet stroke stays, and each wet tile is hidden as soon as
+  the ink tile under it is fresh for the stroke's generation — no flicker, no double edges.
 
 ### Stroke geometry
 
-- Pen: variable-width outline polygon from per-point pressure radius (perfect-freehand style),
-  round caps, filled once → correct edges, no overlapping-alpha artefacts.
-- Highlighter: constant-width polyline, round joins, ~35 % alpha.
+Code: `crates/render/src/ink.rs`.
+
+- Pen: the union of a disc per point (radius from pressure: 25–100 % of half the width) and the
+  tangent hull between neighbouring discs, filled once with the winding rule → round caps,
+  correct joins, no overlapping-alpha artefacts. Finished strokes skip interior discs where the
+  outline turns by less than ~4° (the hulls meet there to within a thousandth of a pixel).
+- Highlighter: constant-width polyline, round joins and caps, ~35 % alpha; drawn before pen ink
+  in every tile.
+- Tiles draw only the shapes that reach into them.
 - Coordinates are page points (1/72 in), so ink lines up with PDF pages exactly.
+- Benchmarks (`cargo bench -p cera-render`), tablet (desktop): 200-sample stroke 348 µs
+  (310), a tile with 500 strokes 52 ms (45), one wet-ink event 26 µs (24), finding a tile's
+  strokes on a 3000-stroke page 4.7 µs (3).
 
 ## 6. Input
 
@@ -158,16 +178,24 @@ previous zoom level's tiles while the new ones render.
 | --- | --- | --- |
 | Stylus tip | `GestureStylus`, `stylus_only = true` | draw with active tool; points from `backlog()` + current event (GTK coalesces motion events, the backlog has the full-rate samples); pressure from `axis(Pressure)` |
 | Stylus eraser end | same, `device_tool().tool_type() == Eraser` | eraser regardless of selected tool |
-| Stylus barrel button | same, button mask | hold → temporary eraser (configurable: lasso) |
+| Stylus barrel button | same, button mask (`BUTTON2`/`BUTTON3`) at pen-down | hold → temporary eraser (configurable: lasso). `GestureStylus` emits *down*/*up* for every button, so a barrel press while hovering also arrives as *down*: only button 1 starts or ends a stroke |
 | One finger | `GtkScrolledWindow`'s own touch pan | scroll with kinetic momentum |
 | Two fingers | `GestureZoom` | pinch zoom around the centroid |
 | Two-/three-finger tap | `GestureClick` (touch) | undo / redo (setting) |
 | Mouse | `GestureDrag` button 1 | draw at fixed pressure; middle-drag pans |
 | Wheel | `EventControllerScroll` | scroll; Ctrl + wheel zooms |
 
-**Palm rejection:** while the stylus is in proximity and for 500 ms after it leaves, a
-capture-phase touch controller claims and swallows touch sequences so a resting hand neither
-scrolls nor draws. Optional "draw with finger" setting turns one-finger touch into drawing.
+**Tablet pen** (Galaxy Tab S9): "Wacom WEZ01 S Pen" with pen and eraser tools, one barrel
+button (`BTN_STYLUS`), pressure, hover distance and tilt.
+
+**Palm rejection** (`crates/app/src/palm.rs`): a capture-phase controller on the canvas's
+overlay swallows touch sequences that begin within 500 ms of the last pen event, or while the
+pen is in proximity (capped at 5 s without pen events, in case a proximity-out is lost). Whole
+sequences are kept or swallowed, never split. Optional "draw with finger" setting (M6) turns
+one-finger touch into drawing.
+
+**Eraser:** removes whole strokes whose ink comes within 10 logical px of the eraser (bounds
+check, then distance to each segment). One drag is one undo step (`History` groups).
 
 **Latency targets:** < 1 ms work per motion event, < 8 ms per frame on the target tablet.
 

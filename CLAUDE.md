@@ -60,6 +60,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 RUST_LOG=cera=debug CERA_DEBUG=1 cargo run -p cera       # logs + memory/frame overlay
 cargo run -p cera --release --example stylus             # M1 stylus spike (see its header)
+CERA_DEBUG_DEMO=1 cargo run -p cera -- file.cera          # scripted draw/erase/undo
+cargo bench -p cera-render                               # ink geometry benchmarks
 GSK_RENDERER=gl cargo run -p cera                        # compare renderers (gl, vulkan, cairo)
 ```
 
@@ -68,7 +70,8 @@ All four of fmt, clippy, test and a successful build must pass before a commit.
 ## Stack
 
 `gtk4` 0.11 (feature `v4_18`), `libadwaita` 0.9 as `adw` (feature `v1_7`), `poppler-rs` 0.26,
-cairo-rs/glib/gio 0.22, `rstar`, `memmap2`, `postcard`, `async-channel`, `tracing`.
+cairo-rs/glib/gio 0.22, `memmap2`, `postcard`, `async-channel`, `tracing`; `criterion` and
+`proptest` for benches and tests. (`rstar` is deferred: linear stroke scans are fast enough.)
 Licence GPL-3.0-or-later (required by Poppler).
 
 ## Conventions

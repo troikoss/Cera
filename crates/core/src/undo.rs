@@ -2,12 +2,33 @@
 //!
 //! [`History`] is the only way to edit a [`Document`]'s ink and pages. Commands address
 //! strokes and pages by index; that is safe because undo and redo replay strictly in order.
+//! Edits made between [`History::begin_group`] and [`History::end_group`] (an eraser drag, say)
+//! undo as one step.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
+use crate::geom::Rect;
 use crate::model::{AssetId, Background, Document, Page, PageId, PageSpec, Stroke};
+
+/// What an undo or redo changed, so the view can redraw only that.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Changes {
+    /// Pages whose ink changed, with the area that needs redrawing.
+    pub ink: Vec<(PageId, Rect)>,
+    /// Pages were added, removed, moved or changed size or paper.
+    pub layout: bool,
+}
+
+impl Changes {
+    fn add_ink(&mut self, page: PageId, area: Rect) {
+        match self.ink.iter_mut().find(|(p, _)| *p == page) {
+            Some((_, r)) => *r = r.union(area),
+            None => self.ink.push((page, area)),
+        }
+    }
+}
 
 /// Default number of undo steps kept.
 pub const DEFAULT_UNDO_STEPS: usize = 500;
@@ -46,6 +67,8 @@ enum Command {
         old: PageSpec,
         new: PageSpec,
     },
+    /// Applied in order, reverted in reverse.
+    Group(Vec<Command>),
 }
 
 impl Command {
@@ -113,25 +136,65 @@ impl Command {
                 ensure(*index < doc.page_count())?;
                 doc.set_spec(*index, if forward { *new } else { *old });
             }
+            Command::Group(cmds) => {
+                if forward {
+                    cmds.iter().try_for_each(|c| c.run(doc, true))?;
+                } else {
+                    cmds.iter().rev().try_for_each(|c| c.run(doc, false))?;
+                }
+            }
         }
         Ok(())
     }
 
-    fn assets(&self) -> impl Iterator<Item = AssetId> {
+    fn assets(&self, out: &mut Vec<AssetId>) {
         let specs = match self {
             Command::InsertPage { page, .. } | Command::RemovePage { page, .. } => {
                 [Some(*page.spec()), None]
             }
             Command::SetPageSpec { old, new, .. } => [Some(*old), Some(*new)],
+            Command::Group(cmds) => {
+                cmds.iter().for_each(|c| c.assets(out));
+                [None, None]
+            }
             _ => [None, None],
         };
-        specs
-            .into_iter()
-            .flatten()
-            .filter_map(|s| match s.background {
-                Background::Pdf { asset, .. } => Some(asset),
-                Background::None => None,
-            })
+        out.extend(
+            specs
+                .into_iter()
+                .flatten()
+                .filter_map(|s| match s.background {
+                    Background::Pdf { asset, .. } => Some(asset),
+                    Background::None => None,
+                }),
+        );
+    }
+
+    fn changes(&self, out: &mut Changes) {
+        let bounds = |strokes: &mut dyn Iterator<Item = &Arc<Stroke>>| {
+            strokes.map(|s| s.bounds()).reduce(Rect::union)
+        };
+        let ink = match self {
+            Command::AddStrokes { page, strokes } => Some((*page, bounds(&mut strokes.iter()))),
+            Command::RemoveStrokes { page, removed } => {
+                Some((*page, bounds(&mut removed.iter().map(|(_, s)| s))))
+            }
+            Command::ReplaceStrokes { page, changes } => Some((
+                *page,
+                bounds(&mut changes.iter().flat_map(|(_, old, new)| [old, new])),
+            )),
+            Command::Group(cmds) => {
+                cmds.iter().for_each(|c| c.changes(out));
+                None
+            }
+            _ => {
+                out.layout = true;
+                None
+            }
+        };
+        if let Some((page, Some(area))) = ink {
+            out.add_ink(page, area);
+        }
     }
 }
 
@@ -160,6 +223,8 @@ pub struct History {
     undo: VecDeque<Command>,
     redo: Vec<Command>,
     max_steps: usize,
+    /// Commands of an open group, applied but not yet an undo step.
+    group: Option<Vec<Command>>,
 }
 
 impl Default for History {
@@ -175,17 +240,39 @@ impl History {
             undo: VecDeque::new(),
             redo: Vec::new(),
             max_steps: max_steps.max(1),
+            group: None,
         }
     }
 
     fn push(&mut self, doc: &mut Document, cmd: Command) -> Result<()> {
         cmd.run(doc, true)?;
         self.redo.clear();
+        match &mut self.group {
+            Some(group) => group.push(cmd),
+            None => self.push_step(cmd),
+        }
+        Ok(())
+    }
+
+    fn push_step(&mut self, cmd: Command) {
         self.undo.push_back(cmd);
         if self.undo.len() > self.max_steps {
             self.undo.pop_front();
         }
-        Ok(())
+    }
+
+    /// Starts collecting edits into one undo step; a no-op if a group is already open.
+    pub fn begin_group(&mut self) {
+        self.group.get_or_insert_with(Vec::new);
+    }
+
+    /// Closes the open group, making its edits (if any) one undo step.
+    pub fn end_group(&mut self) {
+        match self.group.take() {
+            Some(mut cmds) if cmds.len() == 1 => self.push_step(cmds.remove(0)),
+            Some(cmds) if !cmds.is_empty() => self.push_step(Command::Group(cmds)),
+            _ => {}
+        }
     }
 
     pub fn add_strokes(
@@ -296,34 +383,41 @@ impl History {
         )
     }
 
-    /// Reverts the newest step; returns `false` if there was nothing to undo.
-    pub fn undo(&mut self, doc: &mut Document) -> Result<bool> {
+    /// Reverts the newest step (closing an open group first); `None` if there was nothing
+    /// to undo.
+    pub fn undo(&mut self, doc: &mut Document) -> Result<Option<Changes>> {
+        self.end_group();
         let Some(cmd) = self.undo.pop_back() else {
-            return Ok(false);
+            return Ok(None);
         };
         if let Err(e) = cmd.run(doc, false) {
             self.undo.push_back(cmd);
             return Err(e);
         }
+        let mut changes = Changes::default();
+        cmd.changes(&mut changes);
         self.redo.push(cmd);
-        Ok(true)
+        Ok(Some(changes))
     }
 
-    /// Re-applies the newest undone step; returns `false` if there was nothing to redo.
-    pub fn redo(&mut self, doc: &mut Document) -> Result<bool> {
+    /// Re-applies the newest undone step; `None` if there was nothing to redo.
+    pub fn redo(&mut self, doc: &mut Document) -> Result<Option<Changes>> {
+        self.end_group();
         let Some(cmd) = self.redo.pop() else {
-            return Ok(false);
+            return Ok(None);
         };
         if let Err(e) = cmd.run(doc, true) {
             self.redo.push(cmd);
             return Err(e);
         }
+        let mut changes = Changes::default();
+        cmd.changes(&mut changes);
         self.undo.push_back(cmd);
-        Ok(true)
+        Ok(Some(changes))
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
+        !self.undo.is_empty() || self.group.as_ref().is_some_and(|g| !g.is_empty())
     }
 
     pub fn can_redo(&self) -> bool {
@@ -333,11 +427,17 @@ impl History {
     pub fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
+        self.group = None;
     }
 
     /// Assets that undo or redo could bring back; compaction must keep them.
-    pub fn referenced_assets(&self) -> impl Iterator<Item = AssetId> + '_ {
-        self.undo.iter().chain(&self.redo).flat_map(Command::assets)
+    pub fn referenced_assets(&self) -> impl Iterator<Item = AssetId> + use<> {
+        let mut out = Vec::new();
+        let open = self.group.iter().flatten();
+        for cmd in self.undo.iter().chain(&self.redo).chain(open) {
+            cmd.assets(&mut out);
+        }
+        out.into_iter()
     }
 }
 
@@ -379,9 +479,9 @@ mod tests {
         edit(doc, h);
         let after = snapshot(doc);
         assert_ne!(before, after, "edit changed nothing");
-        assert!(h.undo(doc).unwrap());
+        assert!(h.undo(doc).unwrap().is_some());
         assert_eq!(snapshot(doc), before);
-        assert!(h.redo(doc).unwrap());
+        assert!(h.redo(doc).unwrap().is_some());
         assert_eq!(snapshot(doc), after);
     }
 
@@ -430,7 +530,7 @@ mod tests {
         );
         check(&mut d, &mut h, |d, h| h.set_page_spec(d, 1, dots).unwrap());
         // Undo everything back to a single stroke on page 2.
-        while h.undo(&mut d).unwrap() {}
+        while h.undo(&mut d).unwrap().is_some() {}
         let ids: Vec<_> = d.pages().iter().map(Page::id).collect();
         assert_eq!(ids, [0, 1, 2]);
         assert!(d.pages()[2].strokes().unwrap().is_empty());
@@ -442,13 +542,13 @@ mod tests {
         for n in 0..3 {
             h.add_strokes(&mut d, 0, vec![stroke(n)]).unwrap();
         }
-        assert!(h.undo(&mut d).unwrap());
+        assert!(h.undo(&mut d).unwrap().is_some());
         assert!(h.can_redo());
         h.add_strokes(&mut d, 0, vec![stroke(7)]).unwrap();
         assert!(!h.can_redo());
-        assert!(h.undo(&mut d).unwrap());
-        assert!(h.undo(&mut d).unwrap());
-        assert!(!h.undo(&mut d).unwrap(), "only two steps kept");
+        assert!(h.undo(&mut d).unwrap().is_some());
+        assert!(h.undo(&mut d).unwrap().is_some());
+        assert!(h.undo(&mut d).unwrap().is_none(), "only two steps kept");
         assert_eq!(d.pages()[0].strokes().unwrap(), &[stroke(0)]);
     }
 
@@ -471,6 +571,36 @@ mod tests {
         assert!(h.move_page(&mut d, 0, 3).is_err());
         assert_eq!(snapshot(&d), before);
         assert!(!h.can_undo());
+    }
+
+    #[test]
+    fn groups_undo_as_one_step_and_report_changes() {
+        let (mut d, mut h) = (doc(), History::default());
+        h.add_strokes(&mut d, 0, (0..4).map(stroke).collect())
+            .unwrap();
+        h.add_strokes(&mut d, 1, vec![stroke(9)]).unwrap();
+        let before = snapshot(&d);
+        h.begin_group();
+        h.remove_strokes(&mut d, 0, &[0]).unwrap();
+        h.remove_strokes(&mut d, 0, &[1]).unwrap();
+        h.remove_strokes(&mut d, 1, &[0]).unwrap();
+        h.end_group();
+        let after = snapshot(&d);
+        assert_eq!(d.pages()[0].strokes().unwrap(), &[stroke(1), stroke(3)]);
+
+        let changes = h.undo(&mut d).unwrap().unwrap();
+        assert_eq!(snapshot(&d), before);
+        assert!(!changes.layout);
+        let pages: Vec<_> = changes.ink.iter().map(|(p, _)| *p).collect();
+        assert_eq!(pages, [0, 1]);
+        let area = changes.ink[0].1;
+        assert_eq!(area, stroke(0).bounds().union(stroke(2).bounds()));
+        h.redo(&mut d).unwrap();
+        assert_eq!(snapshot(&d), after);
+
+        h.insert_page(&mut d, 0, PageSpec::new(PageSpec::A4, Paper::BLANK))
+            .unwrap();
+        assert!(h.undo(&mut d).unwrap().unwrap().layout);
     }
 
     #[test]

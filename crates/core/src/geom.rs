@@ -34,6 +34,15 @@ impl Rect {
         }
     }
 
+    pub fn union(self, o: Rect) -> Self {
+        Rect {
+            x0: self.x0.min(o.x0),
+            y0: self.y0.min(o.y0),
+            x1: self.x1.max(o.x1),
+            y1: self.y1.max(o.y1),
+        }
+    }
+
     pub fn intersects(&self, other: &Rect) -> bool {
         self.x0 <= other.x1 && other.x0 <= self.x1 && self.y0 <= other.y1 && other.y0 <= self.y1
     }

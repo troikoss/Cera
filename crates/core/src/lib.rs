@@ -13,6 +13,7 @@ mod file;
 mod format;
 mod geom;
 mod model;
+mod simplify;
 mod undo;
 
 pub use error::{Error, Result};
@@ -23,4 +24,5 @@ pub use model::{
     AssetId, Background, Document, Page, PageId, PageSpec, Paper, PaperKind, Point, Rgba8, Stroke,
     Tool,
 };
-pub use undo::History;
+pub use simplify::simplify;
+pub use undo::{Changes, History};

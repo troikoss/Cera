@@ -1,23 +1,19 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cera_core::{Document, NoteFile};
+use cera_core::{Document, NoteFile, Rgba8};
 use cera_render::tile::DocId;
-use gtk::{gio, glib};
+use gtk::{gdk, gio, glib};
 
-use crate::canvas::{Canvas, CanvasDoc};
+use crate::canvas::{Canvas, HIGHLIGHTER_COLORS, PEN_COLORS, ToolKind};
+use crate::note::{Note, SharedNote};
+use crate::swatch::Swatch;
 
-/// The note shown in the window, kept open for editing (M4) and autosave.
-struct OpenNote {
-    id: DocId,
-    #[expect(dead_code, reason = "saved from M4")]
-    file: NoteFile,
-    #[expect(dead_code, reason = "edited from M4")]
-    doc: Document,
-}
+/// Save this long after the last edit (DESIGN.md §7), so a crash loses at most that much.
+const AUTOSAVE_DELAY: Duration = Duration::from_secs(2);
 
 mod imp {
     use super::*;
@@ -37,8 +33,14 @@ mod imp {
         pub note_overlay: TemplateChild<gtk::Overlay>,
         #[template_child]
         pub canvas: TemplateChild<Canvas>,
-        pub(super) note: RefCell<Option<OpenNote>>,
+        #[template_child]
+        pub toolbar: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub tools: TemplateChild<adw::ToggleGroup>,
+        pub(super) swatches: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
+        pub(super) note: RefCell<Option<SharedNote>>,
         pub(super) next_doc: Cell<DocId>,
+        pub(super) autosave: RefCell<Option<glib::SourceId>>,
     }
 
     #[glib::object_subclass]
@@ -62,6 +64,8 @@ mod imp {
             self.parent_constructed();
             let obj = self.obj();
             obj.setup_actions();
+            obj.setup_toolbar();
+            self.note_overlay.add_controller(crate::palm::controller());
             for property in ["current-page", "page-count"] {
                 self.canvas.connect_notify_local(
                     Some(property),
@@ -72,6 +76,19 @@ mod imp {
                     ),
                 );
             }
+            self.canvas.connect_local(
+                "changed",
+                false,
+                glib::clone!(
+                    #[weak]
+                    obj,
+                    #[upgrade_or_default]
+                    move |_| {
+                        obj.edited();
+                        None
+                    }
+                ),
+            );
             if crate::debug_enabled() {
                 obj.add_debug_overlay();
             }
@@ -79,7 +96,14 @@ mod imp {
     }
 
     impl WidgetImpl for CeraWindow {}
-    impl WindowImpl for CeraWindow {}
+
+    impl WindowImpl for CeraWindow {
+        fn close_request(&self) -> glib::Propagation {
+            self.obj().save_now();
+            self.parent_close_request()
+        }
+    }
+
     impl ApplicationWindowImpl for CeraWindow {}
     impl AdwApplicationWindowImpl for CeraWindow {}
 }
@@ -106,6 +130,12 @@ impl CeraWindow {
         let open = gio::ActionEntry::builder("open")
             .activate(|win: &Self, _, _| win.open_dialog())
             .build();
+        let undo = gio::ActionEntry::builder("undo")
+            .activate(|win: &Self, _, _| win.imp().canvas.undo())
+            .build();
+        let redo = gio::ActionEntry::builder("redo")
+            .activate(|win: &Self, _, _| win.imp().canvas.redo())
+            .build();
         let zoom_in = gio::ActionEntry::builder("zoom-in")
             .activate(|win: &Self, _, _| win.imp().canvas.zoom_step(1))
             .build();
@@ -115,7 +145,140 @@ impl CeraWindow {
         let zoom_fit = gio::ActionEntry::builder("zoom-fit")
             .activate(|win: &Self, _, _| win.imp().canvas.zoom_fit_width())
             .build();
-        self.add_action_entries([open, zoom_in, zoom_out, zoom_fit]);
+        let tool = gio::ActionEntry::builder("tool")
+            .parameter_type(Some(glib::VariantTy::STRING))
+            .activate(|win: &Self, _, param| {
+                if let Some(name) = param.and_then(|p| p.get::<String>()) {
+                    win.imp().tools.set_active_name(Some(&name));
+                }
+            })
+            .build();
+        self.add_action_entries([open, undo, redo, zoom_in, zoom_out, zoom_fit, tool]);
+        self.update_undo_actions();
+    }
+
+    /// Tool toggles follow the canvas's tool; three swatches show the pen's or the
+    /// highlighter's colours.
+    fn setup_toolbar(&self) {
+        let imp = self.imp();
+        imp.tools
+            .bind_property("active-name", &*imp.canvas, "tool")
+            .bidirectional()
+            .sync_create()
+            .build();
+        let mut first: Option<gtk::ToggleButton> = None;
+        for i in 0..3 {
+            let swatch = Swatch::new(gdk::RGBA::BLACK);
+            let button = gtk::ToggleButton::builder()
+                .child(&swatch)
+                .css_classes(["flat"])
+                .tooltip_text("Colour")
+                .build();
+            button.set_group(first.as_ref());
+            first.get_or_insert_with(|| button.clone());
+            button.connect_toggled(glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                move |b| {
+                    if b.is_active() {
+                        win.imp().canvas.set_color(win.palette()[i]);
+                    }
+                }
+            ));
+            imp.toolbar.append(&button);
+            imp.swatches.borrow_mut().push((button, swatch));
+        }
+        imp.canvas.connect_notify_local(
+            Some("tool"),
+            glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                move |_, _| win.update_swatches()
+            ),
+        );
+        self.update_swatches();
+    }
+
+    fn palette(&self) -> [Rgba8; 3] {
+        match self.imp().canvas.tool() {
+            ToolKind::Highlighter => HIGHLIGHTER_COLORS,
+            _ => PEN_COLORS,
+        }
+    }
+
+    fn update_swatches(&self) {
+        let imp = self.imp();
+        let palette = self.palette();
+        let current = imp.canvas.color();
+        let drawing = imp.canvas.tool() != ToolKind::Eraser;
+        for (i, (button, swatch)) in imp.swatches.borrow().iter().enumerate() {
+            let c = palette[i];
+            swatch.set_color(gdk::RGBA::new(
+                f32::from(c.r) / 255.0,
+                f32::from(c.g) / 255.0,
+                f32::from(c.b) / 255.0,
+                f32::from(c.a) / 255.0,
+            ));
+            button.set_sensitive(drawing);
+            if c == current {
+                button.set_active(true);
+            }
+        }
+    }
+
+    fn update_undo_actions(&self) {
+        let (can_undo, can_redo) = self
+            .imp()
+            .note
+            .borrow()
+            .as_ref()
+            .map_or((false, false), |n| {
+                let n = n.borrow();
+                (n.history.can_undo(), n.history.can_redo())
+            });
+        for (name, enabled) in [("undo", can_undo), ("redo", can_redo)] {
+            if let Some(action) = self.lookup_action(name).and_downcast::<gio::SimpleAction>() {
+                action.set_enabled(enabled);
+            }
+        }
+    }
+
+    /// After an edit: refresh the undo buttons and save once editing pauses.
+    fn edited(&self) {
+        self.update_undo_actions();
+        let imp = self.imp();
+        if let Some(id) = imp.autosave.take() {
+            id.remove();
+        }
+        let weak = self.downgrade();
+        let id = glib::timeout_add_local_once(AUTOSAVE_DELAY, move || {
+            if let Some(win) = weak.upgrade() {
+                win.imp().autosave.take();
+                win.save_now();
+            }
+        });
+        *imp.autosave.borrow_mut() = Some(id);
+    }
+
+    /// Saves the open note if it has unsaved changes.
+    pub fn save_now(&self) {
+        let imp = self.imp();
+        if let Some(id) = imp.autosave.take() {
+            id.remove();
+        }
+        let Some(note) = imp.note.borrow().clone() else {
+            return;
+        };
+        let started = Instant::now();
+        let result = note.borrow_mut().save();
+        match result {
+            Ok(true) => tracing::debug!(ms = started.elapsed().as_secs_f64() * 1e3, "saved"),
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!("cannot save: {e}");
+                self.toast(&format!("Cannot save “{}”: {e}", note.borrow().name()));
+            }
+        }
     }
 
     fn open_dialog(&self) {
@@ -184,28 +347,26 @@ impl CeraWindow {
 
     fn show_note(&self, file: NoteFile, doc: Document) {
         let imp = self.imp();
-        let renderer = imp.canvas.renderer();
-        if let Some(old) = imp.note.take() {
-            renderer.close_doc(old.id);
-        }
+        self.save_now();
         let id = imp.next_doc.get();
         imp.next_doc.set(id + 1);
-        renderer.open_doc(
-            id,
-            file.assets()
-                .filter_map(|a| Some((a.id, file.asset(a.id)?))),
-        );
-        imp.canvas.set_document(Some(CanvasDoc::new(id, &doc)));
-
-        let name = file
-            .path()
-            .file_stem()
-            .map_or_else(|| "Note".into(), |s| s.to_string_lossy().into_owned());
+        tracing::info!(path = %file.path().display(), pages = doc.page_count(), "opened note");
+        let note = Note::new(id, file, doc);
+        let name = note.borrow().name();
+        *imp.note.borrow_mut() = Some(note.clone());
+        imp.canvas.set_note(Some(note));
         imp.title.set_title(&name);
         self.set_title(Some(&name));
         imp.stack.set_visible_child_name("note");
-        tracing::info!(path = %file.path().display(), pages = doc.page_count(), "opened note");
-        *imp.note.borrow_mut() = Some(OpenNote { id, file, doc });
+        self.update_undo_actions();
+        if std::env::var_os("CERA_DEBUG_DEMO").is_some() {
+            let canvas = imp.canvas.downgrade();
+            glib::timeout_add_local_once(Duration::from_millis(800), move || {
+                if let Some(canvas) = canvas.upgrade() {
+                    canvas.run_demo();
+                }
+            });
+        }
     }
 
     fn update_subtitle(&self) {

@@ -7,8 +7,8 @@ How we get from an empty repo to a daily-usable app. Architecture and reasoning 
 tablet; the next milestone starts after your feedback. Each milestone ends with something you
 can run, plus a short "test on the tablet" list.
 
-**Status:** M0–M2 done and tested on the tablet. M3 implemented; opens on the tablet, waiting
-for your scroll/zoom test. Still to record from the tablet: the M1 stylus log and renderer choice.
+**Status:** M0–M3 done and tested on the tablet. M4 implemented; the scripted demo runs on the
+tablet, waiting for your stylus test. Still to record: the M1 stylus log and renderer choice.
 
 ## M0 — Skeleton
 
@@ -97,19 +97,26 @@ debug overlay and RSS.
 
 ## M4 — Inking
 
-- [ ] Input routing: stylus → tool, eraser end → eraser, barrel button → temporary eraser,
-      mouse → draw at fixed pressure, touch → pan/zoom
-- [ ] Palm rejection: swallow touch while the pen is in proximity and for 500 ms after
-- [ ] Wet-ink buffer with incremental cairo drawing and partial texture updates
-      (`MemoryTextureBuilder::set_update_region`)
-- [ ] Pen outline generation (pressure → radius, round caps) and highlighter polyline
-- [ ] Pen-up: RDP simplify, insert into model + per-page `rstar` tree, re-render touched ink tiles,
-      clear wet ink once they arrive
-- [ ] Stroke eraser (R-tree query + segment distance test)
-- [ ] Undo/redo wired to the header buttons and Ctrl+Z / Ctrl+Shift+Z
-- [ ] Debounced autosave (~2 s after last edit, on tab close, on quit)
-- [ ] Minimal floating tool bar: `AdwToggleGroup` (pen, highlighter, eraser) + 3 colour swatches
-- [ ] Benchmarks (criterion): outline generation, tile render with 500 strokes
+- [x] Input routing: stylus → tool, eraser end → eraser, barrel button → temporary eraser,
+      mouse → draw at fixed pressure (middle-drag pans), touch → pan/zoom
+- [x] Palm rejection: swallow touch while the pen is in proximity and for 500 ms after
+- [x] Wet ink with incremental cairo drawing: tiled on the ink grid, redrawn per event in one
+      fill so it matches the finished tiles exactly
+- [x] Pen outline generation (pressure → radius, round caps) and highlighter polyline
+- [x] Pen-up: RDP simplify, add through `History`, re-render touched ink tiles, clear wet ink
+      tile by tile once they arrive (no `rstar`: a linear scan is 4.7 µs for 3000 strokes on the tablet)
+- [x] Stroke eraser (bounds check + segment distance), one undo step per drag
+- [x] Undo/redo wired to the header buttons and Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y)
+- [x] Debounced autosave (2 s after the last edit, on close, on quit; tabs come in M5)
+- [x] Minimal floating tool bar: `AdwToggleGroup` (pen, highlighter, eraser) + 3 colour swatches;
+      P / H / E switch tools
+- [x] Benchmarks (criterion): outline generation, tile render with 500 strokes, stroke scan
+
+`CERA_DEBUG_DEMO=1` draws, erases and undoes through the real input path with synthetic samples
+(for checking without a stylus, e.g. over SSH).
+
+On the tablet (2026-11-01): the demo draws, erases, undoes and autosaves (13 ms with both fsyncs)
+at 164 MiB RSS; the ink survives `kill -9`.
 
 **Test on the tablet:** fill a few pages of handwriting over a PDF; erase; undo/redo; `kill -9`
 mid-writing and reopen.

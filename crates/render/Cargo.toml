@@ -17,3 +17,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 cairo = { workspace = true, features = ["pdf"] }
+criterion.workspace = true
+
+[[bench]]
+name = "ink"
+harness = false

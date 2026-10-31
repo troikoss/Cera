@@ -67,7 +67,14 @@ impl CeraApplication {
 
     fn setup_actions(&self) {
         let quit = gio::ActionEntry::builder("quit")
-            .activate(|app: &Self, _, _| app.quit())
+            .activate(|app: &Self, _, _| {
+                for window in app.windows() {
+                    if let Some(window) = window.downcast_ref::<CeraWindow>() {
+                        window.save_now();
+                    }
+                }
+                app.quit();
+            })
             .build();
         let about = gio::ActionEntry::builder("about")
             .activate(|app: &Self, _, _| app.show_about())
@@ -80,6 +87,11 @@ impl CeraApplication {
         self.set_accels_for_action("win.zoom-in", &["<Control>plus", "<Control>equal"]);
         self.set_accels_for_action("win.zoom-out", &["<Control>minus"]);
         self.set_accels_for_action("win.zoom-fit", &["<Control>0"]);
+        self.set_accels_for_action("win.undo", &["<Control>z"]);
+        self.set_accels_for_action("win.redo", &["<Control><Shift>z", "<Control>y"]);
+        self.set_accels_for_action("win.tool::pen", &["p"]);
+        self.set_accels_for_action("win.tool::highlighter", &["h"]);
+        self.set_accels_for_action("win.tool::eraser", &["e"]);
     }
 
     fn show_about(&self) {

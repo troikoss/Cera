@@ -62,6 +62,20 @@
                         <property name="menu-model">primary_menu</property>
                       </object>
                     </child>
+                    <child type="end">
+                      <object class="GtkButton">
+                        <property name="icon-name">edit-redo-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Redo</property>
+                        <property name="action-name">win.redo</property>
+                      </object>
+                    </child>
+                    <child type="end">
+                      <object class="GtkButton">
+                        <property name="icon-name">edit-undo-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Undo</property>
+                        <property name="action-name">win.undo</property>
+                      </object>
+                    </child>
                   </object>
                 </child>
                 <property name="content">
@@ -131,6 +145,52 @@
                                 </property>
                               </object>
                             </property>
+                            <!-- Floating tool bar; swatch buttons are added in window.rs. -->
+                            <child type="overlay">
+                              <object class="GtkBox" id="toolbar">
+                                <property name="halign">center</property>
+                                <property name="valign">end</property>
+                                <property name="margin-bottom">18</property>
+                                <property name="spacing">6</property>
+                                <style>
+                                  <class name="toolbar-pill"/>
+                                </style>
+                                <child>
+                                  <object class="AdwToggleGroup" id="tools">
+                                    <property name="active-name">pen</property>
+                                    <style>
+                                      <class name="flat"/>
+                                    </style>
+                                    <child>
+                                      <object class="AdwToggle">
+                                        <property name="name">pen</property>
+                                        <property name="icon-name">cera-pen-symbolic</property>
+                                        <property name="tooltip" translatable="yes">Pen (P)</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="AdwToggle">
+                                        <property name="name">highlighter</property>
+                                        <property name="icon-name">cera-highlighter-symbolic</property>
+                                        <property name="tooltip" translatable="yes">Highlighter (H)</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="AdwToggle">
+                                        <property name="name">eraser</property>
+                                        <property name="icon-name">cera-eraser-symbolic</property>
+                                        <property name="tooltip" translatable="yes">Eraser (E)</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkSeparator">
+                                    <property name="orientation">vertical</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
                           </object>
                         </property>
                       </object>

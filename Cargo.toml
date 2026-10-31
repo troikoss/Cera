@@ -24,6 +24,7 @@ crc32fast = "1.5.3"
 memmap2 = "0.9.12"
 thiserror = "2.0.21"
 anyhow = "1.0.104"
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 tracing = "0.1.44"
 # No `env-filter`: `Targets` parses `RUST_LOG=cera=debug` without pulling in regex.

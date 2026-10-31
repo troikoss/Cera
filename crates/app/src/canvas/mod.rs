@@ -1,37 +1,42 @@
 //! The note canvas: pages stacked vertically inside a `GtkScrolledWindow`, drawn from cached
 //! tile textures (DESIGN.md §5). Implements `GtkScrollable`.
 //!
-//! - Paper is a fill colour plus a repeat node for lines, grid or dots: no textures.
-//! - PDF backgrounds come from the render workers as tiles at the *settled* zoom. While the
-//!   zoom changes, the tiles on hand are scaled by the GPU; new ones are requested once it has
-//!   been still for 150 ms.
-//! - `snapshot` only appends cached textures and colour nodes.
+//! - `mod.rs`: the widget, scrolling and zoom.
+//! - `tiles.rs`: asking the render workers for PDF and ink tiles, and drawing a frame.
+//! - `input.rs`: stylus, mouse and eraser; strokes go into the note through its `History`.
+//! - `wet.rs`: the stroke being drawn, until its finished tiles arrive.
+//!
+//! `snapshot` only appends cached textures and colour nodes.
 
 mod cache;
+mod input;
 mod layout;
+mod tiles;
+mod wet;
 
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 use std::time::Duration;
 
-use cera_core::{Background, Document, PageId, PageSpec, PaperKind, Rgba8};
-use cera_render::tile::{DocId, Grid, Layer, PixelRect, Scale, TileKey};
-use cera_render::worker::{Renderer, TileJob, TileResult};
+use cera_core::{Changes, Document, PageId, PageSpec, Rect, Rgba8};
+use cera_render::tile::{DocId, Grid, Layer, Scale};
+use cera_render::worker::{Renderer, TileResult};
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::{gdk, gio, glib, graphene, gsk};
+use gtk::{gdk, gio, glib};
 
 use self::cache::TileCache;
+pub use self::input::{HIGHLIGHTER_COLORS, PEN_COLORS, ToolKind};
 use self::layout::{Layout, View};
+use self::wet::WetStroke;
+use crate::note::SharedNote;
 
 /// Tile cache budget (DESIGN.md §5). It counts the CPU copy of each texture; GSK keeps GPU
 /// copies of recently drawn tiles on top.
 const TILE_BUDGET: usize = 128 << 20;
 /// Request new tiles this long after the zoom stops changing.
 const SETTLE: Duration = Duration::from_millis(150);
-/// Prefetch around the viewport, in device pixels.
-const PREFETCH_X: f64 = 256.0;
-const PREFETCH_Y: f64 = 512.0;
 /// Logical pixels per point.
 const MIN_ZOOM: f64 = 0.1;
 const MAX_ZOOM: f64 = 8.0;
@@ -41,20 +46,27 @@ const PIXEL_FORMAT: gdk::MemoryFormat = gdk::MemoryFormat::B8g8r8a8Premultiplied
 #[cfg(target_endian = "big")]
 const PIXEL_FORMAT: gdk::MemoryFormat = gdk::MemoryFormat::A8r8g8b8Premultiplied;
 
-/// What the canvas shows: the pages of an open note.
-pub struct CanvasDoc {
-    pub id: DocId,
+/// Page ids, specs and layout of the open note.
+struct CanvasDoc {
+    id: DocId,
     pages: Vec<(PageId, PageSpec)>,
     layout: Layout,
 }
 
 impl CanvasDoc {
-    pub fn new(id: DocId, doc: &Document) -> Self {
+    fn new(id: DocId, doc: &Document) -> Self {
         let pages: Vec<_> = doc.pages().iter().map(|p| (p.id(), *p.spec())).collect();
         let layout = Layout::new(pages.iter().map(|(_, s)| (s.width, s.height)));
         Self { id, pages, layout }
     }
+
+    fn page_index(&self, id: PageId) -> Option<usize> {
+        self.pages.iter().position(|(p, _)| *p == id)
+    }
 }
+
+/// The visible ink tiles of a page that should exist at a scale (those with strokes).
+type ExpectedInk = (Scale, Vec<(u16, u16)>);
 
 #[derive(Clone, Copy)]
 struct Pinch {
@@ -78,6 +90,7 @@ mod imp {
         pub(super) vadjustment: RefCell<Option<(gtk::Adjustment, glib::SignalHandlerId)>>,
         pub(super) hscroll_policy: Cell<gtk::ScrollablePolicy>,
         pub(super) vscroll_policy: Cell<gtk::ScrollablePolicy>,
+        pub(super) note: RefCell<Option<SharedNote>>,
         pub(super) doc: RefCell<Option<CanvasDoc>>,
         pub(super) renderer: OnceCell<Renderer>,
         pub(super) cache: RefCell<TileCache<gdk::Texture>>,
@@ -86,7 +99,20 @@ mod imp {
         pub(super) settled_zoom: Cell<f64>,
         pub(super) fit_width: Cell<bool>,
         pub(super) settle: RefCell<Option<glib::SourceId>>,
-        pub(super) failed: RefCell<HashSet<(DocId, PageId)>>,
+        /// Pages whose PDF background or ink can't be read; not asked for again.
+        pub(super) failed: RefCell<HashSet<(DocId, PageId, Layer)>>,
+        /// Ink generation per page, bumped by every edit; tiles drawn for an older one are stale.
+        pub(super) ink_gen: RefCell<HashMap<PageId, u64>>,
+        /// Visible ink tiles (at a scale) that should exist, so a page is drawn at one scale.
+        pub(super) ink_expected: RefCell<HashMap<PageId, ExpectedInk>>,
+        pub(super) active: RefCell<Option<input::Active>>,
+        /// Finished strokes still shown wet until their tiles arrive.
+        pub(super) wet: RefCell<Vec<WetStroke>>,
+        pub(super) erasing: Cell<bool>,
+        pub(super) eraser_cursor: Cell<Option<(f64, f64)>>,
+        pub(super) tool: Cell<ToolKind>,
+        pub(super) pen_color: Cell<Rgba8>,
+        pub(super) highlighter_color: Cell<Rgba8>,
         pub(super) current_page: Cell<u32>,
         pub(super) pinch: Cell<Option<Pinch>>,
         pub(super) pointer: Cell<(f64, f64)>,
@@ -101,6 +127,7 @@ mod imp {
                 vadjustment: RefCell::default(),
                 hscroll_policy: Cell::new(gtk::ScrollablePolicy::Minimum),
                 vscroll_policy: Cell::new(gtk::ScrollablePolicy::Minimum),
+                note: RefCell::default(),
                 doc: RefCell::default(),
                 renderer: OnceCell::new(),
                 cache: RefCell::new(TileCache::new(TILE_BUDGET)),
@@ -109,6 +136,15 @@ mod imp {
                 fit_width: Cell::new(true),
                 settle: RefCell::default(),
                 failed: RefCell::default(),
+                ink_gen: RefCell::default(),
+                ink_expected: RefCell::default(),
+                active: RefCell::default(),
+                wet: RefCell::default(),
+                erasing: Cell::new(false),
+                eraser_cursor: Cell::new(None),
+                tool: Cell::new(ToolKind::Pen),
+                pen_color: Cell::new(input::PEN_COLORS[0]),
+                highlighter_color: Cell::new(input::HIGHLIGHTER_COLORS[0]),
                 current_page: Cell::new(0),
                 pinch: Cell::new(None),
                 pointer: Cell::new((0.0, 0.0)),
@@ -128,7 +164,6 @@ mod imp {
 
     impl ObjectImpl for Canvas {
         fn properties() -> &'static [glib::ParamSpec] {
-            use std::sync::OnceLock;
             static PROPS: OnceLock<Vec<glib::ParamSpec>> = OnceLock::new();
             PROPS.get_or_init(|| {
                 vec![
@@ -142,20 +177,37 @@ mod imp {
                     glib::ParamSpecUInt::builder("page-count")
                         .read_only()
                         .build(),
+                    // "pen", "highlighter" or "eraser", to bind to the tool bar.
+                    glib::ParamSpecString::builder("tool")
+                        .default_value(Some("pen"))
+                        .build(),
                 ]
             })
         }
 
+        fn signals() -> &'static [glib::subclass::Signal] {
+            static SIGNALS: OnceLock<Vec<glib::subclass::Signal>> = OnceLock::new();
+            // After every edit, undo or redo: for autosave and the undo buttons.
+            SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("changed").build()])
+        }
+
         fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
+            let obj = self.obj();
             match pspec.name() {
-                "hadjustment" => self
-                    .obj()
-                    .set_adjustment(gtk::Orientation::Horizontal, value.get().unwrap()),
-                "vadjustment" => self
-                    .obj()
-                    .set_adjustment(gtk::Orientation::Vertical, value.get().unwrap()),
+                "hadjustment" => {
+                    obj.set_adjustment(gtk::Orientation::Horizontal, value.get().unwrap())
+                }
+                "vadjustment" => {
+                    obj.set_adjustment(gtk::Orientation::Vertical, value.get().unwrap())
+                }
                 "hscroll-policy" => self.hscroll_policy.set(value.get().unwrap()),
                 "vscroll-policy" => self.vscroll_policy.set(value.get().unwrap()),
+                "tool" => {
+                    let name: Option<String> = value.get().unwrap();
+                    if let Some(tool) = name.as_deref().and_then(ToolKind::from_name) {
+                        obj.set_tool(tool);
+                    }
+                }
                 _ => unreachable!(),
             }
         }
@@ -178,6 +230,7 @@ mod imp {
                 "vscroll-policy" => self.vscroll_policy.get().to_value(),
                 "current-page" => self.current_page.get().to_value(),
                 "page-count" => self.obj().page_count().to_value(),
+                "tool" => self.tool.get().name().to_value(),
                 _ => unreachable!(),
             }
         }
@@ -188,7 +241,8 @@ mod imp {
             obj.add_css_class("note-canvas");
             obj.set_overflow(gtk::Overflow::Hidden);
             obj.setup_renderer();
-            obj.setup_input();
+            obj.setup_zoom_input();
+            obj.setup_drawing_input();
 
             let monitor = gio::MemoryMonitor::dup_default();
             let weak = obj.downgrade();
@@ -238,14 +292,30 @@ impl Default for Canvas {
 }
 
 impl Canvas {
-    /// Shows `doc` (or nothing), fitted to the width and scrolled to the top.
-    pub fn set_document(&self, doc: Option<CanvasDoc>) {
+    /// Shows `note` (or nothing), fitted to the width and scrolled to the top.
+    pub fn set_note(&self, note: Option<SharedNote>) {
         let imp = self.imp();
+        let renderer = self.renderer();
         if let Some(old) = imp.doc.take() {
             imp.cache.borrow_mut().remove_doc(old.id);
-            imp.failed.borrow_mut().retain(|(d, _)| *d != old.id);
+            imp.failed.borrow_mut().retain(|(d, ..)| *d != old.id);
+            renderer.close_doc(old.id);
         }
-        *imp.doc.borrow_mut() = doc;
+        imp.active.take();
+        imp.wet.borrow_mut().clear();
+        imp.ink_gen.borrow_mut().clear();
+        imp.ink_expected.borrow_mut().clear();
+        if let Some(note) = &note {
+            let note = note.borrow();
+            let file = &note.file;
+            renderer.open_doc(
+                note.id,
+                file.assets()
+                    .filter_map(|a| Some((a.id, file.asset(a.id)?))),
+            );
+            *imp.doc.borrow_mut() = Some(CanvasDoc::new(note.id, &note.doc));
+        }
+        *imp.note.borrow_mut() = note;
         imp.fit_width.set(true);
         imp.settled_zoom.set(0.0);
         imp.current_page.set(0);
@@ -255,11 +325,6 @@ impl Canvas {
         self.queue_draw();
         self.notify("page-count");
         self.notify("current-page");
-    }
-
-    /// The canvas's render threads; give them a note's assets with `open_doc` before showing it.
-    pub fn renderer(&self) -> &Renderer {
-        self.imp().renderer.get().expect("set up in constructed")
     }
 
     pub fn current_page(&self) -> u32 {
@@ -272,6 +337,83 @@ impl Canvas {
             .borrow()
             .as_ref()
             .map_or(0, |d| d.pages.len() as u32)
+    }
+
+    pub fn undo(&self) {
+        self.step_history(|note| {
+            let crate::note::Note { history, doc, .. } = note;
+            history.undo(doc)
+        });
+    }
+
+    pub fn redo(&self) {
+        self.step_history(|note| {
+            let crate::note::Note { history, doc, .. } = note;
+            history.redo(doc)
+        });
+    }
+
+    fn step_history(
+        &self,
+        step: impl FnOnce(&mut crate::note::Note) -> cera_core::Result<Option<Changes>>,
+    ) {
+        let Some(note) = self.imp().note.borrow().clone() else {
+            return;
+        };
+        let result = step(&mut note.borrow_mut());
+        match result {
+            Ok(Some(changes)) => {
+                self.apply_changes(&note, &changes);
+                self.emit_by_name::<()>("changed", &[]);
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!("undo/redo failed: {e}"),
+        }
+    }
+
+    /// Redraws what an undo or redo changed.
+    fn apply_changes(&self, note: &SharedNote, changes: &Changes) {
+        if changes.layout {
+            let note = note.borrow();
+            *self.imp().doc.borrow_mut() = Some(CanvasDoc::new(note.id, &note.doc));
+            drop(note);
+            self.configure_adjustments(None);
+            self.notify("page-count");
+        }
+        for &(page, area) in &changes.ink {
+            self.invalidate_ink(page, area);
+        }
+        self.request_tiles();
+        self.queue_draw();
+    }
+
+    /// After an edit of `page` within `area` (points): its ink tiles there become stale and
+    /// are asked for again. Returns the page's new ink generation.
+    fn invalidate_ink(&self, page: PageId, area: Rect) -> u64 {
+        let imp = self.imp();
+        let generation = {
+            let mut gens = imp.ink_gen.borrow_mut();
+            let g = gens.entry(page).or_insert(0);
+            *g += 1;
+            *g
+        };
+        let doc = imp.doc.borrow();
+        let Some(doc) = doc.as_ref() else {
+            return generation;
+        };
+        let Some(index) = doc.page_index(page) else {
+            return generation;
+        };
+        let spec = doc.pages[index].1;
+        let target = self.target_scale();
+        let area = area.expanded(2.0 / target.get() as f32);
+        imp.cache
+            .borrow_mut()
+            .invalidate(&(doc.id, page, Layer::Ink), target, |key| {
+                let grid = Grid::new((spec.width, spec.height), key.scale);
+                tiles::tile_area(grid.tile_rect(key.tx, key.ty), key.scale).intersects(&area)
+            });
+        generation
     }
 
     /// Zooms by `steps` quarter-octaves (×1.19 each) around the centre of the view.
@@ -287,7 +429,6 @@ impl Canvas {
 
     pub fn zoom_fit_width(&self) {
         let imp = self.imp();
-        imp.fit_width.set(true);
         let Some(fit) = self.fit_zoom() else { return };
         let centre = (
             f64::from(self.width()) / 2.0,
@@ -307,9 +448,22 @@ impl Canvas {
         } else {
             0.0
         };
+        let wet: usize = imp
+            .wet
+            .borrow()
+            .iter()
+            .map(WetStroke::tile_count)
+            .sum::<usize>()
+            + imp
+                .active
+                .borrow()
+                .as_ref()
+                .map_or(0, |a| a.wet.tile_count());
         let text = format!(
-            "tiles {} · {:.1}/{} MiB · queue {}\nframe {avg:.1} ms avg, {:.1} max · zoom {:.2} · RSS {}",
-            cache.len(),
+            "tiles pdf {} ink {} wet {} · {:.1}/{} MiB · queue {}\nframe {avg:.1} ms avg, {:.1} max · zoom {:.2} · RSS {}",
+            cache.count(Layer::Pdf),
+            cache.count(Layer::Ink),
+            wet,
             cache.bytes() as f64 / f64::from(1 << 20),
             cache.budget() >> 20,
             self.renderer().queue_len(),
@@ -322,6 +476,10 @@ impl Canvas {
             ..FrameStats::default()
         };
         text
+    }
+
+    fn renderer(&self) -> &Renderer {
+        self.imp().renderer.get().expect("set up in constructed")
     }
 
     fn setup_renderer(&self) {
@@ -340,7 +498,7 @@ impl Canvas {
         });
     }
 
-    fn setup_input(&self) {
+    fn setup_zoom_input(&self) {
         let pinch = gtk::GestureZoom::new();
         pinch.set_propagation_phase(gtk::PropagationPhase::Capture);
         pinch.connect_begin(glib::clone!(
@@ -447,6 +605,11 @@ impl Canvas {
         self.native()
             .and_then(|n| n.surface())
             .map_or(f64::from(self.scale_factor()), |s| s.scale())
+    }
+
+    /// Device pixels per point that tiles are rendered at.
+    fn target_scale(&self) -> Scale {
+        Scale::new(self.imp().settled_zoom.get() * self.device_scale())
     }
 
     fn view(&self) -> Option<View> {
@@ -586,165 +749,6 @@ impl Canvas {
         *imp.settle.borrow_mut() = Some(id);
     }
 
-    /// Queues the missing tiles at the settled zoom: visible ones first, then prefetch.
-    fn request_tiles(&self) {
-        let imp = self.imp();
-        let Some(renderer) = imp.renderer.get() else {
-            return;
-        };
-        if imp.settle.borrow().is_some() {
-            return; // zoom still changing
-        }
-        let doc = imp.doc.borrow();
-        let (Some(doc), Some(view)) = (doc.as_ref(), self.view()) else {
-            renderer.set_jobs(Vec::new());
-            return;
-        };
-        let scale = self.device_scale();
-        let s = Scale::new(imp.settled_zoom.get() * scale);
-        let (margin_x, margin_y) = (PREFETCH_X / scale, PREFETCH_Y / scale);
-        let cache = imp.cache.borrow();
-        let failed = imp.failed.borrow();
-
-        let (_, y0, _, y1) = view.visible_pt();
-        let pages = doc
-            .layout
-            .pages_between(y0 - margin_y / view.zoom, y1 + margin_y / view.zoom);
-        let (mut visible, mut prefetch) = (Vec::new(), Vec::new());
-        for i in pages {
-            let (id, spec) = doc.pages[i];
-            let Background::Pdf { asset, page } = spec.background else {
-                continue;
-            };
-            if failed.contains(&(doc.id, id)) {
-                continue;
-            }
-            let grid = Grid::new((spec.width, spec.height), s);
-            let r = doc.layout.page_rect(i);
-            let (px, py) = view.to_view(r.x, r.y);
-            // View coordinates → this page's pixel grid.
-            let to_grid = |vx: f64, vy: f64| {
-                (
-                    (vx - px) / view.zoom * s.get(),
-                    (vy - py) / view.zoom * s.get(),
-                )
-            };
-            let (ix0, iy0) = to_grid(0.0, 0.0);
-            let (ix1, iy1) = to_grid(view.width, view.height);
-            let (ox0, oy0) = to_grid(-margin_x, -margin_y);
-            let (ox1, oy1) = to_grid(view.width + margin_x, view.height + margin_y);
-            for (tx, ty) in grid.tiles_in(ox0, oy0, ox1, oy1) {
-                let key = TileKey {
-                    doc: doc.id,
-                    page: id,
-                    layer: Layer::Pdf,
-                    scale: s,
-                    tx,
-                    ty,
-                };
-                if cache.contains(&key) {
-                    continue;
-                }
-                let job = TileJob {
-                    key,
-                    page_size: (spec.width, spec.height),
-                    asset,
-                    pdf_page: page,
-                    fill: spec.paper.fill,
-                };
-                if overlaps(grid.tile_rect(tx, ty), (ix0, iy0, ix1, iy1)) {
-                    visible.push(job);
-                } else {
-                    prefetch.push(job);
-                }
-            }
-        }
-        tracing::debug!(
-            visible = visible.len(),
-            prefetch = prefetch.len(),
-            scale = s.get(),
-            "requesting tiles"
-        );
-        visible.append(&mut prefetch);
-        renderer.set_jobs(visible);
-    }
-
-    fn tile_ready(&self, result: TileResult) {
-        let imp = self.imp();
-        if imp.doc.borrow().as_ref().map(|d| d.id) != Some(result.key.doc) {
-            return;
-        }
-        match result.pixels {
-            Ok(p) => {
-                let texture = gdk::MemoryTexture::new(
-                    p.width as i32,
-                    p.height as i32,
-                    PIXEL_FORMAT,
-                    &p.bytes,
-                    p.stride,
-                );
-                imp.cache
-                    .borrow_mut()
-                    .insert(result.key, texture.upcast(), p.bytes.len());
-                self.queue_draw();
-            }
-            Err(e) => {
-                if imp
-                    .failed
-                    .borrow_mut()
-                    .insert((result.key.doc, result.key.page))
-                {
-                    tracing::warn!(page = result.key.page, "cannot render PDF page: {e}");
-                }
-            }
-        }
-    }
-
-    fn draw(&self, snapshot: &gtk::Snapshot) {
-        let imp = self.imp();
-        let doc = imp.doc.borrow();
-        let (Some(doc), Some(view)) = (doc.as_ref(), self.view()) else {
-            return;
-        };
-        let scale = self.device_scale();
-        let snap = |v: f64| ((v * scale).round() / scale) as f32;
-        let target = Scale::new(imp.settled_zoom.get() * scale);
-        let mut cache = imp.cache.borrow_mut();
-        cache.begin_frame();
-
-        let (_, y0, _, y1) = view.visible_pt();
-        let mut covered = Vec::new();
-        for i in doc.layout.pages_between(y0, y1) {
-            let (id, spec) = doc.pages[i];
-            let r = doc.layout.page_rect(i);
-            let (vx, vy) = view.to_view(r.x, r.y);
-            let page = graphene::Rect::new(
-                snap(vx),
-                snap(vy),
-                (r.w * view.zoom) as f32,
-                (r.h * view.zoom) as f32,
-            );
-            draw_paper(snapshot, &spec, &page, view.zoom, scale);
-            if let Background::Pdf { .. } = spec.background {
-                let tiles = PageTiles {
-                    doc: doc.id,
-                    page: id,
-                    size: (spec.width, spec.height),
-                    rect: page,
-                    zoom: view.zoom,
-                    viewport: (view.width, view.height),
-                };
-                if tiles.draw(snapshot, &mut cache, target) {
-                    covered.push((doc.id, id, Layer::Pdf));
-                }
-            }
-        }
-        // Older zoom levels were only needed until the settled one arrived.
-        for page in covered {
-            cache.remove_other_scales(&page, target);
-        }
-    }
-
     fn track_frame_times(&self) {
         let Some(clock) = self.frame_clock() else {
             return;
@@ -766,167 +770,6 @@ impl Canvas {
             }
         });
     }
-}
-
-/// One page's PDF tiles as drawn this frame.
-struct PageTiles {
-    doc: DocId,
-    page: PageId,
-    size: (f32, f32),
-    /// Page rectangle in view coordinates.
-    rect: graphene::Rect,
-    zoom: f64,
-    viewport: (f64, f64),
-}
-
-impl PageTiles {
-    /// Tiles at `scale` that cover the visible part of the page, with their view rectangles.
-    fn visible(&self, scale: Scale) -> impl Iterator<Item = (TileKey, graphene::Rect)> + '_ {
-        let grid = Grid::new(self.size, scale);
-        let s = scale.get();
-        let (px, py) = (f64::from(self.rect.x()), f64::from(self.rect.y()));
-        let to_grid = |v: f64, origin: f64| (v - origin) / self.zoom * s;
-        let tiles = grid.tiles_in(
-            to_grid(0.0, px),
-            to_grid(0.0, py),
-            to_grid(self.viewport.0, px),
-            to_grid(self.viewport.1, py),
-        );
-        let k = self.zoom / s;
-        tiles.map(move |(tx, ty)| {
-            let r = grid.tile_rect(tx, ty);
-            let key = TileKey {
-                doc: self.doc,
-                page: self.page,
-                layer: Layer::Pdf,
-                scale,
-                tx,
-                ty,
-            };
-            let rect = graphene::Rect::new(
-                (px + f64::from(r.x) * k) as f32,
-                (py + f64::from(r.y) * k) as f32,
-                (f64::from(r.width) * k) as f32,
-                (f64::from(r.height) * k) as f32,
-            );
-            (key, rect)
-        })
-    }
-
-    /// Draws tiles at `target`; where some are missing, tiles at other scales go underneath.
-    /// Returns whether `target` covered the visible part on its own.
-    fn draw(
-        &self,
-        snapshot: &gtk::Snapshot,
-        cache: &mut TileCache<gdk::Texture>,
-        target: Scale,
-    ) -> bool {
-        let wanted: Vec<_> = self.visible(target).collect();
-        let complete = wanted.iter().all(|(key, _)| cache.contains(key));
-        if !complete {
-            let mut others: Vec<Scale> = cache
-                .scales(&(self.doc, self.page, Layer::Pdf))
-                .filter(|&s| s != target)
-                .collect();
-            // Closest to the target last, so it ends up on top.
-            let distance = |s: &Scale| (s.get() / target.get()).ln().abs();
-            others.sort_by(|a, b| distance(b).total_cmp(&distance(a)));
-            for scale in others {
-                for (key, rect) in self.visible(scale) {
-                    if let Some(texture) = cache.get(&key) {
-                        snapshot.append_texture(texture, &rect);
-                    }
-                }
-            }
-        }
-        for (key, rect) in &wanted {
-            if let Some(texture) = cache.get(key) {
-                snapshot.append_texture(texture, rect);
-            }
-        }
-        complete
-    }
-}
-
-fn overlaps(r: PixelRect, (x0, y0, x1, y1): (f64, f64, f64, f64)) -> bool {
-    f64::from(r.x) < x1
-        && f64::from(r.x + r.width) > x0
-        && f64::from(r.y) < y1
-        && f64::from(r.y + r.height) > y0
-}
-
-fn rgba(c: Rgba8) -> gdk::RGBA {
-    gdk::RGBA::new(
-        f32::from(c.r) / 255.0,
-        f32::from(c.g) / 255.0,
-        f32::from(c.b) / 255.0,
-        f32::from(c.a) / 255.0,
-    )
-}
-
-/// Page edge, fill and pattern: colour nodes only, the pattern as one repeat node.
-fn draw_paper(
-    snapshot: &gtk::Snapshot,
-    spec: &PageSpec,
-    page: &graphene::Rect,
-    zoom: f64,
-    scale: f64,
-) {
-    let px = (1.0 / scale) as f32;
-    let edge = graphene::Rect::new(
-        page.x() - px,
-        page.y() - px,
-        page.width() + 2.0 * px,
-        page.height() + 2.0 * px,
-    );
-    let shade = gdk::RGBA::new(0.0, 0.0, 0.0, 0.18);
-    snapshot.append_border(
-        &gsk::RoundedRect::from_rect(edge, 0.0),
-        &[px; 4],
-        &[shade; 4],
-    );
-    snapshot.append_color(&rgba(spec.paper.fill), page);
-
-    let paper = spec.paper;
-    let spacing = (f64::from(paper.spacing) * zoom) as f32;
-    if paper.kind == PaperKind::Blank || spacing < 2.0 {
-        return;
-    }
-    let line = rgba(paper.line);
-    let width = ((0.5 * zoom) as f32).max(px);
-    let (x, y) = (page.x(), page.y());
-    let cell = match paper.kind {
-        PaperKind::Ruled => graphene::Rect::new(x, y, page.width(), spacing),
-        _ => graphene::Rect::new(x, y, spacing, spacing),
-    };
-    snapshot.push_repeat(page, Some(&cell));
-    match paper.kind {
-        PaperKind::Ruled => {
-            snapshot.append_color(
-                &line,
-                &graphene::Rect::new(x, y + spacing - width, page.width(), width),
-            );
-        }
-        PaperKind::Grid => {
-            snapshot.append_color(
-                &line,
-                &graphene::Rect::new(x, y + spacing - width, spacing, width),
-            );
-            snapshot.append_color(
-                &line,
-                &graphene::Rect::new(x + spacing - width, y, width, spacing),
-            );
-        }
-        PaperKind::Dots => {
-            let dot = ((1.5 * zoom) as f32).max(2.0 * px);
-            snapshot.append_color(
-                &line,
-                &graphene::Rect::new(x + spacing - dot, y + spacing - dot, dot, dot),
-            );
-        }
-        PaperKind::Blank => {}
-    }
-    snapshot.pop();
 }
 
 /// Resident set size in KiB, from /proc.

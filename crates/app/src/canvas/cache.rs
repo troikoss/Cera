@@ -1,5 +1,8 @@
 //! Tile textures with a byte budget, evicting the least recently drawn first.
 //!
+//! Ink tiles carry the page's ink generation they were drawn for. An edit marks the tiles it
+//! touches stale: they stay on screen until their replacement arrives, so nothing flickers.
+//!
 //! Generic over the texture type so the bookkeeping is testable without a display.
 
 use std::collections::HashMap;
@@ -12,6 +15,8 @@ pub type PageKey = (DocId, PageId, Layer);
 struct Entry<T> {
     value: T,
     bytes: usize,
+    generation: u64,
+    stale: bool,
     /// Frame in which the tile was last drawn or inserted; tiles of the current frame stay.
     frame: u64,
     /// Order of last use, for least-recently-used eviction.
@@ -49,8 +54,22 @@ impl<T> TileCache<T> {
         self.frame += 1;
     }
 
+    /// Whether the tile can be drawn (it may be stale).
     pub fn contains(&self, key: &TileKey) -> bool {
         self.tiles.contains_key(key)
+    }
+
+    /// Whether the tile is up to date, so it needn't be rendered again.
+    pub fn is_fresh(&self, key: &TileKey) -> bool {
+        self.tiles.get(key).is_some_and(|e| !e.stale)
+    }
+
+    /// The generation of an up-to-date tile.
+    pub fn fresh_generation(&self, key: &TileKey) -> Option<u64> {
+        self.tiles
+            .get(key)
+            .filter(|e| !e.stale)
+            .map(|e| e.generation)
     }
 
     /// The tile, marked as drawn in this frame.
@@ -64,11 +83,14 @@ impl<T> TileCache<T> {
         })
     }
 
-    pub fn insert(&mut self, key: TileKey, value: T, bytes: usize) {
+    /// Adds a tile; `stale` if the page changed while it was being drawn.
+    pub fn insert(&mut self, key: TileKey, value: T, bytes: usize, generation: u64, stale: bool) {
         self.stamp += 1;
         let entry = Entry {
             value,
             bytes,
+            generation,
+            stale,
             frame: self.frame,
             stamp: self.stamp,
         };
@@ -91,6 +113,38 @@ impl<T> TileCache<T> {
         self.remove_where(|_, e| e.frame < frame);
     }
 
+    /// After an edit in `area`: tiles at `scale` for which `hit` is true become stale; at other
+    /// scales they are dropped, since they would never be redrawn.
+    pub fn invalidate(&mut self, page: &PageKey, scale: Scale, hit: impl Fn(&TileKey) -> bool) {
+        let mut doomed = Vec::new();
+        for (key, e) in &mut self.tiles {
+            if page_key(key) != *page || !hit(key) {
+                continue;
+            }
+            if key.scale == scale {
+                e.stale = true;
+            } else {
+                doomed.push(*key);
+            }
+        }
+        for key in doomed {
+            self.remove(&key);
+        }
+    }
+
+    pub fn remove_page(&mut self, page: &PageKey) {
+        self.remove_where(|k, _| page_key(k) == *page);
+    }
+
+    pub fn remove_tile(&mut self, key: &TileKey) {
+        self.remove(key);
+    }
+
+    /// Tiles per layer, for the debug overlay.
+    pub fn count(&self, layer: Layer) -> usize {
+        self.tiles.keys().filter(|k| k.layer == layer).count()
+    }
+
     /// Drops a page's tiles at every scale but `keep`, once `keep` covers what's on screen.
     pub fn remove_other_scales(&mut self, page: &PageKey, keep: Scale) {
         if self.scales.get(page).is_some_and(|s| s.len() > 1) {
@@ -102,6 +156,7 @@ impl<T> TileCache<T> {
         self.remove_where(|k, _| k.doc == doc);
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.tiles.len()
     }
@@ -182,11 +237,11 @@ mod tests {
     fn evicts_least_recently_drawn_within_budget() {
         let mut c = TileCache::new(300);
         for tx in 0..3 {
-            c.insert(key(0, 1.0, tx), tx, 100);
+            c.insert(key(0, 1.0, tx), tx, 100, 0, false);
         }
         c.begin_frame();
         c.get(&key(0, 1.0, 0)); // drawn now
-        c.insert(key(0, 1.0, 3), 3, 100);
+        c.insert(key(0, 1.0, 3), 3, 100, 0, false);
         assert_eq!(c.bytes(), 300);
         assert!(c.contains(&key(0, 1.0, 0)), "drawn this frame");
         assert!(!c.contains(&key(0, 1.0, 1)), "oldest evicted");
@@ -197,8 +252,8 @@ mod tests {
     fn never_evicts_what_is_on_screen() {
         let mut c = TileCache::new(100);
         c.begin_frame();
-        c.insert(key(0, 1.0, 0), 0, 100);
-        c.insert(key(0, 1.0, 1), 1, 100);
+        c.insert(key(0, 1.0, 0), 0, 100, 0, false);
+        c.insert(key(0, 1.0, 1), 1, 100, 0, false);
         assert_eq!(c.len(), 2, "both inserted this frame");
         c.begin_frame();
         c.retain_current_frame();
@@ -206,12 +261,29 @@ mod tests {
     }
 
     #[test]
+    fn edits_mark_current_tiles_stale_and_drop_other_scales() {
+        let mut c = TileCache::new(10_000);
+        c.insert(key(0, 2.0, 0), (), 10, 3, false);
+        c.insert(key(0, 2.0, 1), (), 10, 3, false);
+        c.insert(key(0, 1.0, 0), (), 10, 3, false);
+        c.invalidate(&(1, 0, Layer::Pdf), Scale::new(2.0), |k| k.tx == 0);
+        assert!(
+            c.contains(&key(0, 2.0, 0)) && !c.is_fresh(&key(0, 2.0, 0)),
+            "kept but stale"
+        );
+        assert_eq!(c.fresh_generation(&key(0, 2.0, 1)), Some(3), "untouched");
+        assert!(!c.contains(&key(0, 1.0, 0)), "other scale dropped");
+        c.insert(key(0, 2.0, 0), (), 10, 4, false);
+        assert_eq!(c.fresh_generation(&key(0, 2.0, 0)), Some(4));
+    }
+
+    #[test]
     fn tracks_scales_per_page() {
         let mut c = TileCache::new(10_000);
-        c.insert(key(0, 1.0, 0), (), 10);
-        c.insert(key(0, 2.0, 0), (), 10);
-        c.insert(key(0, 2.0, 1), (), 10);
-        c.insert(key(5, 2.0, 0), (), 10);
+        c.insert(key(0, 1.0, 0), (), 10, 0, false);
+        c.insert(key(0, 2.0, 0), (), 10, 0, false);
+        c.insert(key(0, 2.0, 1), (), 10, 0, false);
+        c.insert(key(5, 2.0, 0), (), 10, 0, false);
         let mut scales: Vec<f64> = c.scales(&(1, 0, Layer::Pdf)).map(Scale::get).collect();
         scales.sort_by(f64::total_cmp);
         assert_eq!(scales, [1.0, 2.0]);
