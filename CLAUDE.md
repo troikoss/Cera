@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-Margin (working name): a stylus-first handwritten-notes app in Rust + GTK4 + libadwaita.
-PDFs are imported into a native `.margin` file and their pages become page backgrounds.
+Cera: a stylus-first handwritten-notes app in Rust + GTK4 + libadwaita.
+PDFs are imported into a native `.cera` file and their pages become page backgrounds.
 Notes live in an Obsidian-style vault folder.
 
 - Design and reasoning: [docs/DESIGN.md](docs/DESIGN.md)
@@ -30,10 +30,10 @@ Keep changes reviewable: small modules, focused commits, and end each milestone 
 ## Layout (planned, from M0)
 
 ```
-crates/core     model, .margin format, geometry, stroke outlines, undo — no GTK, fully unit-tested
+crates/core     model, .cera format, geometry, stroke outlines, undo — no GTK, fully unit-tested
 crates/render   cairo + Poppler tile rasteriser and render worker thread — no widgets
 crates/app      GTK/libadwaita UI: window, vault sidebar, canvas widget, input
-crates/cli      margin-cli: import / info / compact (testing aid)
+crates/cli      cera-cli: import / info / compact (testing aid)
 docs/           DESIGN.md, PLAN.md
 ```
 
@@ -49,12 +49,12 @@ sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libpop
 ```
 
 ```bash
-cargo run -p margin            # run the app
+cargo run -p cera              # run the app
 cargo test --workspace         # tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
-RUST_LOG=margin=debug MARGIN_DEBUG=1 cargo run -p margin   # logs + memory/frame overlay
-GSK_RENDERER=ngl cargo run -p margin                       # compare renderers (ngl, vulkan, gl)
+RUST_LOG=cera=debug CERA_DEBUG=1 cargo run -p cera       # logs + memory/frame overlay
+GSK_RENDERER=ngl cargo run -p cera                       # compare renderers (ngl, vulkan, gl)
 ```
 
 All four of fmt, clippy, test and a successful build must pass before a commit.
@@ -71,6 +71,6 @@ Licence GPL-3.0-or-later (required by Poppler).
 - GTK widgets as subclasses with composite templates (`.ui` XML in `crates/app/data/`),
   compiled into a GResource by `build.rs`.
 - Page coordinates are PDF points (1/72 in) everywhere in the model.
-- The `.margin` format is versioned: bump the version and keep a reader for old files when
+- The `.cera` format is versioned: bump the version and keep a reader for old files when
   changing the encoding; unknown chunk kinds must be skipped, not rejected.
 - UI text in sentence case, following the GNOME HIG.

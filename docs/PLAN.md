@@ -1,4 +1,4 @@
-# Margin — implementation plan
+# Cera — implementation plan
 
 How we get from an empty repo to a daily-usable app. Architecture and reasoning live in
 [DESIGN.md](DESIGN.md); this file is the work list.
@@ -21,7 +21,7 @@ can run, plus a short "test on the tablet" list.
 - [ ] `cargo fmt`, `cargo clippy -D warnings`, `cargo test` all clean
 
 **Test on the tablet:** builds natively; window opens; sidebar collapses below 600sp.
-Record baseline RSS (`grep -E 'Rss|Pss' /proc/$(pidof margin)/smaps_rollup`).
+Record baseline RSS (`grep -E 'Rss|Pss' /proc/$(pidof cera)/smaps_rollup`).
 
 **Done when:** the window runs on desktop and tablet and the baseline is written into DESIGN.md §10.
 
@@ -48,11 +48,11 @@ rest your palm while writing; note which renderer feels best.
 - [ ] Save: append dirty chunks + manifest + footer, fsync; compaction via temp file + rename
 - [ ] PDF import (Poppler in `crates/render`, called from the CLI): page count, sizes, embed bytes
 - [ ] Undo/redo command log (`AddStrokes`, `RemoveStrokes`, `TransformStrokes`, page ops), capped
-- [ ] `margin-cli import <pdf> <out.margin>`, `info <file>`, `compact <file>`
+- [ ] `cera-cli import <pdf> <out.cera>`, `info <file>`, `compact <file>`
 - [ ] Tests: encode/decode round-trip (proptest), save/open round-trip, truncate-at-every-byte
       recovery, compaction keeps content identical
 
-**Done when:** all tests pass and `margin-cli info` on an imported 300-page PDF prints correct
+**Done when:** all tests pass and `cera-cli info` on an imported 300-page PDF prints correct
 page sizes instantly.
 
 ## M3 — Viewer (`crates/render`, canvas in `crates/app`)
@@ -66,7 +66,7 @@ page sizes instantly.
 - [ ] Pinch zoom (`GestureZoom`) and Ctrl+wheel zoom around the pointer; GPU-scaled tiles during
       the gesture, re-render 150 ms after it settles
 - [ ] `gio::MemoryMonitor` low-memory handling
-- [ ] `MARGIN_DEBUG=1` overlay: tiles and bytes per layer, queue length, frame time
+- [ ] `CERA_DEBUG=1` overlay: tiles and bytes per layer, queue length, frame time
 - [ ] Temporary "open file" action so M3 is testable before the vault exists
 
 **Test on the tablet:** open a 300-page text PDF and a 50-page scanned PDF; fling-scroll top to
@@ -97,8 +97,8 @@ mid-writing and reopen.
 
 ## M5 — Vault
 
-- [ ] Open folder / create vault; recent vaults in `~/.config/margin/vaults.json`
-- [ ] `.margin/` per-vault folder: `vault.toml`, `workspace.json`
+- [ ] Open folder / create vault; recent vaults in `~/.config/cera/vaults.json`
+- [ ] `.cera/` per-vault folder: `vault.toml`, `workspace.json`
 - [ ] Sidebar tree: `DirectoryList` → `FilterListModel` → `SortListModel` → `TreeListModel` →
       `ListView` + `TreeExpander`
 - [ ] New note (default paper), new folder, inline rename, drag-and-drop move, delete to trash
@@ -127,7 +127,7 @@ mid-writing and reopen.
 - [ ] Vector PDF export: cairo `PdfSurface`, Poppler `render_for_printing`, strokes as paths
 - [ ] PNG export of the current page
 - [ ] Flatpak manifest (GNOME runtime) for x86_64 and aarch64
-- [ ] `.desktop` file, AppStream metainfo, MIME type for `.margin`, app icon
+- [ ] `.desktop` file, AppStream metainfo, MIME type for `.cera`, app icon
 - [ ] Licence headers / `COPYING` (GPL-3.0-or-later)
 
 ## Later
@@ -147,6 +147,5 @@ recognition, dark paper, sync-conflict handling.
 
 ## Open questions
 
-- Final app name, app id (`io.github.<you>.Margin`?) and file extension
 - Which tablet exactly (affects M1 and the renderer choice)
 - Default paper and page size for new notes (A4 ruled?)

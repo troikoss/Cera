@@ -1,6 +1,7 @@
-# Margin — design and plan
+# Cera — design and plan
 
-> "Margin" is a working name. Rename freely; it only affects the app id, binary name and file extension.
+> App id `io.github.troikoss.Cera`, binary `cera`, file extension `.cera`. Named after *cera*, the wax
+> of Roman writing tablets you wrote on with a stylus.
 
 A handwritten-notes app for Linux tablets, written in Rust with GTK4 and libadwaita.
 The hard requirement is efficiency: it must run smoothly on a ~4 GB ARM tablet with a
@@ -24,7 +25,7 @@ Mali GPU sharing system memory.
 Rnote (Rust, GTK4, libadwaita) is the closest existing app. Its design choices that
 cost memory on small devices, and our alternative:
 
-| Rnote | Margin |
+| Rnote | Cera |
 | --- | --- |
 | Every stroke keeps its own rendered bitmaps and GSK render nodes (`RenderComponent { images, rendernodes }` per stroke), so memory and node count grow with the number of strokes | Per-*tile* caches: memory grows with screen area, not with how much you've written |
 | Its deps (`hayro`, `hayro-svg`, `librsvg`, `usvg`) suggest PDF pages go PDF → SVG → rasterise | Poppler rasterises straight into tile buffers from a memory-mapped PDF |
@@ -62,11 +63,11 @@ sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libpop
 ## 4. Architecture
 
 ```
-margin/                 Cargo workspace
+cera/                   Cargo workspace
 ├─ crates/core          no GTK. Model, file format, geometry, stroke outlines, undo.
 ├─ crates/render        cairo + Poppler tile rasteriser and worker thread. No widgets.
 ├─ crates/app           GTK/libadwaita UI: window, vault sidebar, canvas widget, input.
-└─ crates/cli           margin-cli: import / info / compact / render-page (testing aid)
+└─ crates/cli           cera-cli: import / info / compact / render-page (testing aid)
 ```
 
 `core` is pure Rust so the format, geometry and undo logic are unit-testable and fuzzable
@@ -155,13 +156,13 @@ scrolls nor draws. Optional "draw with finger" setting turns one-finger touch in
 
 **Latency targets:** < 1 ms work per motion event, < 8 ms per frame on the target tablet.
 
-## 7. File format (`.margin`)
+## 7. File format (`.cera`)
 
 One self-contained file per note. Append-only log so autosave is cheap and crash-safe.
 
 ```
 ┌───────────────────────────────────────────────┐
-│ Header (64 B)  magic "MARGIN\0", version, flags │
+│ Header (64 B)  magic "CERANOTE", version, flags │
 ├───────────────────────────────────────────────┤
 │ Asset blobs   original PDF bytes, 4 KiB-aligned │  ← mmap'd and given to Poppler as-is
 ├───────────────────────────────────────────────┤
@@ -196,7 +197,7 @@ One self-contained file per note. Append-only log so autosave is cheap and crash
 ### PDF import
 
 1. Read the PDF bytes; get page count and page sizes with Poppler.
-2. Write a new `.margin` file: PDF as an asset blob, one page per PDF page with
+2. Write a new `.cera` file: PDF as an asset blob, one page per PDF page with
    `Pdf { asset, page_index }` background, empty ink, a thumbnail.
 3. No rasterisation at import, so it's fast and the file is only slightly bigger than the PDF.
 4. Options in the import dialog: name, destination folder, page range, keep or trash the original.
@@ -205,12 +206,12 @@ Deleting or reordering pages only edits the manifest; unused assets are dropped 
 
 ## 8. Vault
 
-- A vault is any folder. Per-vault state lives in a hidden `.margin/` folder at its root
+- A vault is any folder. Per-vault state lives in a hidden `.cera/` folder at its root
   (like `.obsidian/`): `vault.toml` (default paper, tool presets), `workspace.json`
   (open tabs, last page per note, sidebar expansion).
-- Recent vaults: `~/.config/margin/vaults.json` (XDG config, no GSettings schema to install).
+- Recent vaults: `~/.config/cera/vaults.json` (XDG config, no GSettings schema to install).
 - Sidebar tree, almost no custom code:
-  `gtk::DirectoryList` (monitored) → `FilterListModel` (folders, `*.margin`, `*.pdf`, no dotfiles)
+  `gtk::DirectoryList` (monitored) → `FilterListModel` (folders, `*.cera`, `*.pdf`, no dotfiles)
   → `SortListModel` (folders first, natural sort) → `TreeListModel` → `ListView` + `TreeExpander`.
 - File operations: new note, new folder, rename inline, drag-and-drop move, delete to the
   desktop trash (`gio::File::trash`).
@@ -267,7 +268,7 @@ Set budgets relative to the measured baseline (GTK + libadwaita alone is a large
 
 How we check:
 
-- `MARGIN_DEBUG=1` overlay: tile count / bytes per layer, worker queue length, frame time.
+- `CERA_DEBUG=1` overlay: tile count / bytes per layer, worker queue length, frame time.
 - `/proc/<pid>/smaps_rollup` and `heaptrack` on the tablet for each milestone.
 - Try `GSK_RENDERER=ngl`, `vulkan` and `gl` on the tablet's Mesa driver and keep the best as
   the documented default.
