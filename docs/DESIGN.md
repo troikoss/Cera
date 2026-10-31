@@ -4,8 +4,8 @@
 > of Roman writing tablets you wrote on with a stylus.
 
 A handwritten-notes app for Linux tablets, written in Rust with GTK4 and libadwaita.
-The hard requirement is efficiency: it must run smoothly on a ~4 GB ARM tablet with a
-Mali GPU sharing system memory.
+The hard requirement is efficiency: it must stay smooth and light on an ARM tablet whose GPU
+shares system memory, using far less than Rnote does.
 
 ## 1. Requirements
 
@@ -18,7 +18,7 @@ Mali GPU sharing system memory.
 | Organisation | Obsidian-style vault: any folder on disk, sidebar file tree, notes are files |
 | Look | libadwaita, minimal chrome, floating tool bar |
 | Licence | GPL-3.0-or-later (required by Poppler) |
-| Target | ARM tablet, ~4 GB RAM, Mali GPU, Wayland (developed on x86 Ubuntu 26.04 / KDE) |
+| Target | Samsung Galaxy Tab S9 Wi-Fi: Snapdragon 8 Gen 2 (1×X3, 2×A715, 2×A710, 3×A510), Adreno 740 via Mesa Turnip (GTK picks Vulkan), 8 GB (7.6 GB visible), 2560 × 1600 screen at 2× scale, Fedora 44, GNOME on Wayland. Developed on x86 Ubuntu 26.04 / KDE |
 
 ## 2. Prior art and what we do differently
 
@@ -54,10 +54,14 @@ Versions checked 2026-10-31.
 
 No async runtime (tokio), no WebKit, no librsvg.
 
-System packages for development (Ubuntu 26.04):
+System packages for development (Ubuntu 26.04, then Fedora 44 on the tablet):
 
 ```bash
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libpoppler-glib-dev
+```
+
+```bash
+sudo dnf install gcc pkgconf-pkg-config gtk4-devel libadwaita-devel poppler-glib-devel
 ```
 
 ## 4. Architecture
@@ -110,19 +114,21 @@ The canvas is a custom widget implementing `GtkScrollable` inside a `GtkScrolled
 - At low zoom a whole page is one texture instead of many tiles (fewer nodes, and scanned PDFs
   decode their image once instead of once per tile).
 - Cache key `(doc, page, layer, zoom step, tx, ty)` → `gdk::Texture`, LRU with a **byte budget**
-  (default 48 MiB, configurable). Visible tiles first, then one ring of prefetch.
+  (default 128 MiB, configurable). Visible tiles first, then one ring of prefetch.
 - Textures are kept as stable `gdk::Texture` objects so GSK uploads each one once, not per frame.
 - No retained cairo surfaces: a tile is rendered, turned into a `gdk::MemoryTexture`, and the
   buffer handed over. An ink edit re-renders affected tiles from the R-tree query (a few ms).
 - `gio::MemoryMonitor` low-memory warnings drop everything except visible tiles.
 - Inactive tabs release all their tiles; their strokes stay (they're small).
 
-Rough numbers for a 1280 × 800 screen: ~20 visible tiles per layer + prefetch ring ≈ 10 MiB
-per layer. The 48 MiB budget covers two layers with headroom.
+Rough numbers for the 2560 × 1600 screen: 88 visible tiles per layer (22 MiB), 130 with the
+prefetch ring (33 MiB). Two layers need ~65 MiB; the 128 MiB budget leaves room to keep the
+previous zoom level's tiles while the new ones render.
 
 ### Wet ink (low-latency drawing)
 
-- One viewport-sized RGBA buffer (≈ 4 MiB at 1280 × 800).
+- One viewport-sized RGBA buffer (16 MiB at 2560 × 1600). M4 may tile it so only the tiles a
+  stroke touches are allocated.
 - Each motion event draws only the new segment into it with cairo.
 - The texture is rebuilt with `gdk::MemoryTextureBuilder::set_update_texture` +
   `set_update_region` (GTK ≥ 4.16), so the renderer uploads only the dirty rectangle per frame.
@@ -180,7 +186,7 @@ One self-contained file per note. Append-only log so autosave is cheap and crash
 
 Code: `crates/core/src/format.rs` (layout), `codec.rs` (strokes), `file.rs` (open/save/compact).
 
-- **Open:** read footer → manifest → nothing else (~60 µs for a 324-page note). Page ink is
+- **Open:** read footer → manifest → nothing else (~0.1 ms for a 324-page note on the tablet). Page ink is
   decoded lazily (`Document::load_ink`) from the mmap. If the last footer is bad (crash
   mid-save), scan backwards for the newest valid one. The bytes after it are left in place and
   counted as dead, never truncated, so a bug can't destroy data on open. A footer from a newer
@@ -275,16 +281,16 @@ Set budgets relative to the measured baseline (GTK + libadwaita alone is a large
 
 | Scenario | Target |
 | --- | --- |
-| Vault open, no note | baseline + ≤ 15 MiB |
-| 300-page PDF note, scrolling and zooming | baseline + ≤ 80 MiB RSS |
-| GPU textures | ≤ tile budget (48 MiB default) + wet-ink buffer |
+| Vault open, no note | baseline + ≤ 20 MiB |
+| 300-page PDF note, scrolling and zooming | baseline + ≤ 200 MiB RSS |
+| GPU textures | ≤ tile budget (128 MiB default) + wet-ink buffer (16 MiB) |
 
 Measured baseline (release build, window open on the "Open a vault" page, idle):
 
 | Machine | RSS | PSS | Notes |
 | --- | --- | --- | --- |
 | x86 desktop, KDE Wayland, default GSK renderer | 105 MiB | 46 MiB | M0, 2026-10-31; PSS is the fairer number since GTK's shared libs count in full in RSS |
-| Target tablet | — | — | to record in M0 testing |
+| Galaxy Tab S9 Wi-Fi, Fedora 44, GNOME Wayland, Vulkan (Turnip) | 120 MiB | 59 MiB | M0, 2026-11-01; 43 MiB of the PSS is anonymous memory, much of it likely the Vulkan driver |
 
 How we check:
 

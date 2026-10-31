@@ -10,8 +10,9 @@ Notes live in an Obsidian-style vault folder.
 
 ## The one rule: efficiency
 
-The target is an ARM tablet with ~4 GB RAM and a Mali GPU sharing system memory. Rnote is too
-heavy there; that's why this app exists. Weigh every change against RAM and GPU cost:
+The target is a Galaxy Tab S9 (Fedora 44, 8 GB RAM, Adreno 740 sharing system memory, 2560×1600
+screen at 2× scale). It has room, but the app should stay far lighter than Rnote; that's why it
+exists. Budgets are in DESIGN.md §10. Weigh every change against RAM and GPU cost:
 
 - Cache per screen tile, never per stroke or per object. Caches have byte budgets.
 - Load lazily (page ink near the viewport only); release caches for inactive tabs.
@@ -42,10 +43,14 @@ Keep GTK types out of `core`. Poppler objects aren't `Send`: each render worker 
 
 ## Commands
 
-System packages (Ubuntu 26.04):
+System packages (Ubuntu 26.04 desktop; Fedora 44 on the tablet):
 
 ```bash
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libpoppler-glib-dev
+```
+
+```bash
+sudo dnf install gcc pkgconf-pkg-config gtk4-devel libadwaita-devel poppler-glib-devel
 ```
 
 ```bash

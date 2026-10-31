@@ -7,8 +7,8 @@ How we get from an empty repo to a daily-usable app. Architecture and reasoning 
 tablet; the next milestone starts after your feedback. Each milestone ends with something you
 can run, plus a short "test on the tablet" list.
 
-**Status:** M0 and M1 run on the tablet. M2 implemented, waiting for review. Still to record
-from the tablet: M0 baseline RSS, the M1 stylus log and renderer choice.
+**Status:** M0–M2 done and tested on the tablet (M2 numbers below). M3 next, after your
+feedback. Still to record from the tablet: the M1 stylus log and renderer choice.
 
 ## M0 — Skeleton
 
@@ -66,6 +66,10 @@ rest your palm while writing; note which renderer feels best.
 
 **Done when:** all tests pass and `cera-cli info` on an imported 300-page PDF prints correct
 page sizes instantly.
+
+On the tablet (2026-11-01): all 27 tests pass; a 324-page PDF imports in 94 ms and opens in
+0.09 ms with correct sizes; `scribble` saves of 2–6 MB take 23–190 ms with both fsyncs (ext4
+on UFS); compaction 13.9 → 8.2 MiB in 39 ms. Release build of `cera-cli`: 31 s.
 
 ## M3 — Viewer (`crates/render`, canvas in `crates/app`)
 
@@ -151,13 +155,16 @@ recognition, dark paper, sync-conflict handling.
 
 1. **Stylus support on the actual tablet** (M1): pressure, tool type and proximity through
    Wayland tablet-v2. Everything else depends on it.
-2. **GPU driver behaviour** (M1/M3): many small textures on Mesa's Mali driver; renderer choice.
+2. **GPU driver behaviour** (M1/M3): many small textures on the tablet's Mesa driver (Turnip on
+   Adreno 740; GTK picks Vulkan by default); renderer choice.
 3. **Scanned PDFs** (M3): Poppler decodes a page's full image per render call; whole-page
    textures at low zoom should mitigate it. Measure with a scanned 50-page PDF.
-4. **Build times on ARM:** the first gtk-rs build on a Cortex-A55-class CPU is slow. Develop on
-   x86, build release on the tablet over SSH (incremental builds are fine), Flatpak for installs.
+4. ~~**Build times on ARM**~~ Retired: the Tab S9 builds the workspace tests in ~75 s and an
+   incremental release `cera-cli` in ~30 s. Develop on x86, build and test on the tablet over
+   SSH (`fedora@<tablet>`, key auth), Flatpak for installs.
 
 ## Open questions
 
-- Which tablet exactly (affects M1 and the renderer choice)
+- ~~Which tablet exactly~~ Galaxy Tab S9 Wi-Fi on Fedora 44 (DESIGN.md §1). Budgets in §10 were
+  relaxed to fit it (2026-11-01): 128 MiB tile budget, 300-page note ≤ baseline + 200 MiB.
 - Default paper and page size for new notes (A4 ruled?)
