@@ -7,6 +7,13 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+cera-core.workspace = true
+cairo.workspace = true
+async-channel.workspace = true
+tracing.workspace = true
 glib.workspace = true
 poppler.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+cairo = { workspace = true, features = ["pdf"] }

@@ -108,14 +108,23 @@ The canvas is a custom widget implementing `GtkScrollable` inside a `GtkScrolled
 
 ### Tiles
 
-- 256 × 256 device pixels, RGBA → 256 KiB each.
-- Zoom is quantised to steps of 2^(1/4) (≈ 1.19×). While pinching, existing tiles are scaled by
-  the GPU; new tiles are requested 150 ms after the gesture settles.
-- At low zoom a whole page is one texture instead of many tiles (fewer nodes, and scanned PDFs
-  decode their image once instead of once per tile).
-- Cache key `(doc, page, layer, zoom step, tx, ty)` → `gdk::Texture`, LRU with a **byte budget**
-  (default 128 MiB, configurable). Visible tiles first, then one ring of prefetch.
+- 256 × 256 device pixels, RGBA → 256 KiB each (edge tiles are smaller).
+- Tiles are rendered at exactly the *settled* zoom, so text is sharp at any zoom. Ctrl+± and the
+  zoom buttons move in steps of 2^(1/4) (≈ 1.19×); pinch and Ctrl+wheel are continuous. While
+  the zoom changes, the tiles on hand are scaled by the GPU; the visible tiles are requested
+  150 ms after it stops. Once a page is covered at the new zoom, its older zoom levels are
+  dropped instead of waiting for the LRU.
+- A page whose longer side is ≤ 1024 device px is one texture instead of tiles (fewer nodes,
+  and scanned PDFs decode their image once instead of once per tile).
+- Cache key `(doc, page, layer, scale, tx, ty)` → `gdk::Texture`, LRU with a **byte budget**
+  (default 128 MiB). Visible tiles first, then a prefetch margin of 256 device px sideways and
+  512 above and below.
+- The canvas replaces the worker queue on every scroll, so tiles that scrolled away are never
+  rendered. A worker renders a page's queued tiles (up to 16) with one Poppler call and slices
+  the result, so a page is parsed (and a scanned image decoded) once per batch, not per tile.
 - Textures are kept as stable `gdk::Texture` objects so GSK uploads each one once, not per frame.
+  A `gdk::MemoryTexture` keeps its CPU buffer, which is what the budget counts; GSK's GPU copies
+  of recently drawn tiles come on top (the same memory on the tablet).
 - No retained cairo surfaces: a tile is rendered, turned into a `gdk::MemoryTexture`, and the
   buffer handed over. An ink edit re-renders affected tiles from the R-tree query (a few ms).
 - `gio::MemoryMonitor` low-memory warnings drop everything except visible tiles.

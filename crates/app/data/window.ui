@@ -16,7 +16,7 @@
       </object>
     </child>
     <property name="content">
-      <object class="AdwToastOverlay">
+      <object class="AdwToastOverlay" id="toasts">
         <property name="child">
           <object class="AdwOverlaySplitView" id="split_view">
             <property name="sidebar">
@@ -36,12 +36,22 @@
               <object class="AdwToolbarView">
                 <child type="top">
                   <object class="AdwHeaderBar">
-                    <property name="show-title">False</property>
+                    <property name="title-widget">
+                      <object class="AdwWindowTitle" id="title"/>
+                    </property>
                     <child type="start">
                       <object class="GtkToggleButton">
                         <property name="icon-name">sidebar-show-symbolic</property>
                         <property name="tooltip-text" translatable="yes">Toggle sidebar</property>
                         <property name="action-name">win.show-sidebar</property>
+                      </object>
+                    </child>
+                    <!-- Temporary until the vault (M5): open a PDF or a note directly. -->
+                    <child type="start">
+                      <object class="GtkButton">
+                        <property name="icon-name">document-open-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Open PDF or note</property>
+                        <property name="action-name">win.open</property>
                       </object>
                     </child>
                     <child type="end">
@@ -55,40 +65,76 @@
                   </object>
                 </child>
                 <property name="content">
-                  <object class="AdwStatusPage">
-                    <property name="icon-name">folder-symbolic</property>
-                    <property name="title" translatable="yes">Open a vault</property>
-                    <property name="description" translatable="yes">A vault is a folder of notes</property>
-                    <property name="child">
-                      <object class="GtkBox">
-                        <property name="orientation">vertical</property>
-                        <property name="spacing">12</property>
-                        <property name="halign">center</property>
-                        <!-- app.open-vault and app.create-vault are registered in M5;
-                             until then GTK shows these buttons insensitive. -->
-                        <child>
-                          <object class="GtkButton">
-                            <property name="label" translatable="yes">_Open folder…</property>
-                            <property name="use-underline">True</property>
-                            <property name="action-name">app.open-vault</property>
-                            <style>
-                              <class name="pill"/>
-                              <class name="suggested-action"/>
-                            </style>
+                  <object class="GtkStack" id="stack">
+                    <property name="transition-type">crossfade</property>
+                    <child>
+                      <object class="GtkStackPage">
+                        <property name="name">empty</property>
+                        <property name="child">
+                          <object class="AdwStatusPage">
+                            <property name="icon-name">folder-symbolic</property>
+                            <property name="title" translatable="yes">Open a vault</property>
+                            <property name="description" translatable="yes">A vault is a folder of notes</property>
+                            <property name="child">
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">12</property>
+                                <property name="halign">center</property>
+                                <child>
+                                  <object class="GtkButton">
+                                    <property name="label" translatable="yes">Open _PDF or Note…</property>
+                                    <property name="use-underline">True</property>
+                                    <property name="action-name">win.open</property>
+                                    <style>
+                                      <class name="pill"/>
+                                      <class name="suggested-action"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <!-- app.open-vault and app.create-vault are registered in M5;
+                                     until then GTK shows these buttons insensitive. -->
+                                <child>
+                                  <object class="GtkButton">
+                                    <property name="label" translatable="yes">_Open Folder…</property>
+                                    <property name="use-underline">True</property>
+                                    <property name="action-name">app.open-vault</property>
+                                    <style>
+                                      <class name="pill"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkButton">
+                                    <property name="label" translatable="yes">_Create Vault…</property>
+                                    <property name="use-underline">True</property>
+                                    <property name="action-name">app.create-vault</property>
+                                    <style>
+                                      <class name="pill"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
                           </object>
-                        </child>
-                        <child>
-                          <object class="GtkButton">
-                            <property name="label" translatable="yes">_Create vault…</property>
-                            <property name="use-underline">True</property>
-                            <property name="action-name">app.create-vault</property>
-                            <style>
-                              <class name="pill"/>
-                            </style>
-                          </object>
-                        </child>
+                        </property>
                       </object>
-                    </property>
+                    </child>
+                    <child>
+                      <object class="GtkStackPage">
+                        <property name="name">note</property>
+                        <property name="child">
+                          <object class="GtkOverlay" id="note_overlay">
+                            <property name="child">
+                              <object class="GtkScrolledWindow">
+                                <property name="child">
+                                  <object class="CeraCanvas" id="canvas"/>
+                                </property>
+                              </object>
+                            </property>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
                   </object>
                 </property>
               </object>

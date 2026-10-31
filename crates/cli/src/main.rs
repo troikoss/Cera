@@ -6,10 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use cera_core::{
-    AssetKind, Background, Document, History, MappedBytes, NewAsset, NoteFile, PageSpec, Point,
-    Rgba8, Stroke, Tool,
-};
+use cera_core::{Background, History, NoteFile, PageSpec, Point, Rgba8, Stroke, Tool};
 
 const USAGE: &str = "\
 usage: cera-cli <command> [args]
@@ -59,21 +56,8 @@ fn import(pdf: &Path, out: &Path) -> Result<()> {
         bail!("{} already exists", out.display());
     }
     let started = Instant::now();
-    let data = MappedBytes::open(pdf).with_context(|| format!("reading {}", pdf.display()))?;
-    let info = cera_render::pdf::inspect(data.clone())
-        .with_context(|| format!("reading {}", pdf.display()))?;
-    let mut doc = Document::new(
-        info.pages
-            .iter()
-            .zip(0..)
-            .map(|(&size, i)| PageSpec::pdf(size, 0, i)),
-    );
-    let asset = NewAsset {
-        kind: AssetKind::Pdf,
-        data: data.as_ref(),
-    };
-    let file = NoteFile::create(out, &mut doc, &[asset])
-        .with_context(|| format!("writing {}", out.display()))?;
+    let (file, doc) = cera_render::import::import_pdf(pdf, out)
+        .with_context(|| format!("importing {}", pdf.display()))?;
     println!(
         "imported {} pages into {} ({}) in {:.0?}",
         doc.page_count(),

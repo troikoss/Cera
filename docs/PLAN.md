@@ -7,8 +7,8 @@ How we get from an empty repo to a daily-usable app. Architecture and reasoning 
 tablet; the next milestone starts after your feedback. Each milestone ends with something you
 can run, plus a short "test on the tablet" list.
 
-**Status:** M0–M2 done and tested on the tablet (M2 numbers below). M3 next, after your
-feedback. Still to record from the tablet: the M1 stylus log and renderer choice.
+**Status:** M0–M2 done and tested on the tablet. M3 implemented; opens on the tablet, waiting
+for your scroll/zoom test. Still to record from the tablet: the M1 stylus log and renderer choice.
 
 ## M0 — Skeleton
 
@@ -71,22 +71,27 @@ On the tablet (2026-11-01): all 27 tests pass; a 324-page PDF imports in 94 ms a
 0.09 ms with correct sizes; `scribble` saves of 2–6 MB take 23–190 ms with both fsyncs (ext4
 on UFS); compaction 13.9 → 8.2 MiB in 39 ms. Release build of `cera-cli`: 31 s.
 
-## M3 — Viewer (`crates/render`, canvas in `crates/app`)
+## M3 — Note canvas (`crates/render`, canvas in `crates/app`)
 
-- [ ] Canvas widget implementing `GtkScrollable`; vertical page layout with gaps, centred
-- [ ] Paper layer drawn with `append_color` (blank, ruled, grid, dots)
-- [ ] Render worker thread: `TileJob` / generation counter / cancellation, own Poppler documents
-      opened from the mmap'd asset
-- [ ] Tile cache: 256 px tiles, quantised zoom steps (2^(1/4)), LRU with byte budget,
-      whole-page texture at low zoom, prefetch ring
-- [ ] Pinch zoom (`GestureZoom`) and Ctrl+wheel zoom around the pointer; GPU-scaled tiles during
-      the gesture, re-render 150 ms after it settles
-- [ ] `gio::MemoryMonitor` low-memory handling
-- [ ] `CERA_DEBUG=1` overlay: tiles and bytes per layer, queue length, frame time
-- [ ] Temporary "open file" action so M3 is testable before the vault exists
+Shows a converted note: paper, PDF backgrounds (ink arrives in M4). There is no separate PDF
+viewer: opening a PDF converts it to a note first.
 
-**Test on the tablet:** open a 300-page text PDF and a 50-page scanned PDF; fling-scroll top to
-bottom; pinch in and out; watch the debug overlay and RSS.
+- [x] Canvas widget implementing `GtkScrollable`; vertical page layout with gaps, centred
+- [x] Paper layer drawn with `append_color` (blank, ruled, grid, dots; patterns as repeat nodes)
+- [x] Render worker threads: `TileJob`s, the queue replaced on every scroll (no stale work),
+      per-page batching, own Poppler documents opened from the mmap'd asset
+- [x] Tile cache: 256 px tiles at the settled zoom, LRU with byte budget, whole-page texture at
+      low zoom, prefetch margin, older zoom levels dropped once covered
+- [x] Pinch zoom (`GestureZoom`) and Ctrl+wheel zoom around the pointer, Ctrl+± / Ctrl+0; GPU-scaled
+      tiles while zooming, re-render 150 ms after it settles
+- [x] `gio::MemoryMonitor` low-memory handling
+- [x] `CERA_DEBUG=1` overlay: tiles and bytes, queue length, frame time, zoom, RSS
+- [x] Temporary Open button (Ctrl+O) and `cera file.pdf`: a PDF is converted to `file.cera`
+      next to it (or that note is opened if it exists), then shown
+
+**Test on the tablet:** `CERA_DEBUG=1 cargo run --release -p cera -- some.pdf`; open a 300-page
+text PDF and a 50-page scanned PDF; fling-scroll top to bottom; pinch in and out; watch the
+debug overlay and RSS.
 
 **Done when:** scrolling stays smooth and memory stays within DESIGN.md §10.
 

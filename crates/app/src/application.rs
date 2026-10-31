@@ -28,11 +28,16 @@ mod imp {
 
         fn activate(&self) {
             self.parent_activate();
-            let app = self.obj();
-            let window = app
-                .active_window()
-                .unwrap_or_else(|| CeraWindow::new(&*app).upcast());
+            self.obj().window().present();
+        }
+
+        /// `cera file.pdf` or `cera note.cera`: show it (only one note at a time until M5).
+        fn open(&self, files: &[gio::File], _hint: &str) {
+            let window = self.obj().window();
             window.present();
+            if let Some(path) = files.first().and_then(|f| f.path()) {
+                glib::spawn_future_local(async move { window.open_path(path).await });
+            }
         }
     }
 
@@ -50,7 +55,14 @@ impl CeraApplication {
     pub fn new() -> Self {
         glib::Object::builder()
             .property("application-id", APP_ID)
+            .property("flags", gio::ApplicationFlags::HANDLES_OPEN)
             .build()
+    }
+
+    fn window(&self) -> CeraWindow {
+        self.active_window()
+            .and_downcast()
+            .unwrap_or_else(|| CeraWindow::new(self))
     }
 
     fn setup_actions(&self) {
@@ -64,6 +76,10 @@ impl CeraApplication {
 
         self.set_accels_for_action("app.quit", &["<Control>q"]);
         self.set_accels_for_action("win.show-sidebar", &["F9"]);
+        self.set_accels_for_action("win.open", &["<Control>o"]);
+        self.set_accels_for_action("win.zoom-in", &["<Control>plus", "<Control>equal"]);
+        self.set_accels_for_action("win.zoom-out", &["<Control>minus"]);
+        self.set_accels_for_action("win.zoom-fit", &["<Control>0"]);
     }
 
     fn show_about(&self) {

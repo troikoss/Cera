@@ -1,1 +1,15 @@
 /* App-wide styles. AdwApplication loads this file from the resource base path. */
+
+/* The grey desk the pages lie on; pages stay white in dark mode. */
+.note-canvas {
+  background-color: color-mix(in srgb, var(--window-bg-color) 88%, black);
+}
+
+label.debug-overlay {
+  background-color: rgb(0 0 0 / 65%);
+  color: white;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 9pt;
+}

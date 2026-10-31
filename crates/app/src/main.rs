@@ -1,9 +1,11 @@
 //! Cera: stylus-first handwritten notes for Linux tablets.
 
 mod application;
+mod canvas;
 mod window;
 
 use std::io::IsTerminal;
+use std::sync::OnceLock;
 
 use gtk::{gio, glib, prelude::*};
 use tracing_subscriber::filter::{LevelFilter, Targets};
@@ -20,6 +22,12 @@ fn main() -> glib::ExitCode {
     gio::resources_register_include!("cera.gresource").expect("embedded GResource is valid");
 
     CeraApplication::new().run()
+}
+
+/// `CERA_DEBUG=1` turns on the tile/memory/frame-time overlay.
+pub fn debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("CERA_DEBUG").is_some_and(|v| v == "1"))
 }
 
 /// Logs to stderr, filtered by `RUST_LOG` (`target=level` pairs, e.g. `cera=debug`).
