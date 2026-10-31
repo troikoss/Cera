@@ -7,7 +7,7 @@ How we get from an empty repo to a daily-usable app. Architecture and reasoning 
 tablet; the next milestone starts after your feedback. Each milestone ends with something you
 can run, plus a short "test on the tablet" list.
 
-**Status:** M0 implemented, waiting for tablet test and feedback.
+**Status:** M0 and the M1 spike implemented; both waiting for a tablet test and feedback.
 
 ## M0 — Skeleton
 
@@ -28,12 +28,17 @@ Record baseline RSS (`grep -E 'Rss|Pss' /proc/$(pidof cera)/smaps_rollup`).
 
 ## M1 — Stylus spike
 
-- [ ] Throwaway `examples/stylus.rs` in `crates/app`: one `GtkDrawingArea`-style widget
-- [ ] `GestureStylus` (`stylus_only`): log down/motion/up/proximity, pressure, tilt,
+- [x] Throwaway `examples/stylus.rs` in `crates/app`: one `GtkDrawingArea`-style widget
+- [x] `GestureStylus` (`stylus_only`): log down/motion/up/proximity, pressure, tilt,
       `DeviceToolType`, button mask, backlog length per motion event, event timestamps
-- [ ] Touch: log touch sequences separately; check the stylus never arrives as touch
-- [ ] Draw raw polylines (width from pressure) to eyeball latency
-- [ ] Try `GSK_RENDERER=ngl`, `vulkan`, `gl` and note frame times
+- [x] Touch: log touch sequences separately; check the stylus never arrives as touch
+- [x] Draw raw polylines (width from pressure) to eyeball latency
+- [ ] Try `GSK_RENDERER=gl`, `vulkan`, `cairo` and note frame times (GTK 4.18 removed the old GL
+      renderer and renamed `ngl` to `gl`)
+
+Run: `cargo run -p cera --release --example stylus` (flags in the file header). Each pen-up
+logs and shows a stroke summary: rates, backlog, pressure/tilt, handler and paint time,
+input→presentation latency.
 
 **Test on the tablet:** write a few lines; flip to the eraser end; press the barrel button;
 rest your palm while writing; note which renderer feels best.

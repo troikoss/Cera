@@ -54,7 +54,8 @@ cargo test --workspace         # tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 RUST_LOG=cera=debug CERA_DEBUG=1 cargo run -p cera       # logs + memory/frame overlay
-GSK_RENDERER=ngl cargo run -p cera                       # compare renderers (ngl, vulkan, gl)
+cargo run -p cera --release --example stylus             # M1 stylus spike (see its header)
+GSK_RENDERER=gl cargo run -p cera                        # compare renderers (gl, vulkan, cairo)
 ```
 
 All four of fmt, clippy, test and a successful build must pass before a commit.

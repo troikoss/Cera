@@ -277,8 +277,8 @@ How we check:
 
 - `CERA_DEBUG=1` overlay: tile count / bytes per layer, worker queue length, frame time.
 - `/proc/<pid>/smaps_rollup` and `heaptrack` on the tablet for each milestone.
-- Try `GSK_RENDERER=ngl`, `vulkan` and `gl` on the tablet's Mesa driver and keep the best as
-  the documented default.
+- Try `GSK_RENDERER=gl`, `vulkan` and `cairo` on the tablet's Mesa driver and keep the best as
+  the documented default. (GTK 4.18 removed the old GL renderer; `ngl` is now called `gl`.)
 
 ## 11. Plan
 
