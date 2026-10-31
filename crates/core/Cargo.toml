@@ -1,0 +1,9 @@
+[package]
+name = "cera-core"
+description = "Cera document model and .cera file format (no GTK)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

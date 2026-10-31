@@ -7,18 +7,19 @@ How we get from an empty repo to a daily-usable app. Architecture and reasoning 
 tablet; the next milestone starts after your feedback. Each milestone ends with something you
 can run, plus a short "test on the tablet" list.
 
-**Status:** planning done, M0 not started.
+**Status:** M0 implemented, waiting for tablet test and feedback.
 
 ## M0 — Skeleton
 
-- [ ] Install system packages (`libgtk-4-dev libadwaita-1-dev libpoppler-glib-dev`)
-- [ ] Cargo workspace: `crates/core`, `crates/render`, `crates/app`, `crates/cli`
-- [ ] Release profile tuned for size/speed (`lto = "thin"`, `codegen-units = 1`, `panic = "abort"`)
-- [ ] `build.rs` compiling a GResource (`.ui` templates, `style.css`, icons) with `glib-build-tools`
-- [ ] `AdwApplication` + `AdwApplicationWindow` with `AdwOverlaySplitView`, empty sidebar,
+- [x] Install system packages (`libgtk-4-dev libadwaita-1-dev libpoppler-glib-dev`)
+- [x] Cargo workspace: `crates/core`, `crates/render`, `crates/app`, `crates/cli`
+- [x] Release profile tuned for size/speed (`lto = "thin"`, `codegen-units = 1`, `panic = "abort"`)
+- [x] `build.rs` compiling a GResource (`.ui` templates, `style.css`, icons) with `glib-build-tools`
+      (no custom icons yet; GtkApplication picks up `icons/` under the resource base path)
+- [x] `AdwApplication` + `AdwApplicationWindow` with `AdwOverlaySplitView`, empty sidebar,
       `AdwStatusPage` "Open a vault"
-- [ ] `tracing` logging controlled by `RUST_LOG`
-- [ ] `cargo fmt`, `cargo clippy -D warnings`, `cargo test` all clean
+- [x] `tracing` logging controlled by `RUST_LOG`
+- [x] `cargo fmt`, `cargo clippy -D warnings`, `cargo test` all clean
 
 **Test on the tablet:** builds natively; window opens; sidebar collapses below 600sp.
 Record baseline RSS (`grep -E 'Rss|Pss' /proc/$(pidof cera)/smaps_rollup`).

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Prefix = the app id as a path, which is AdwApplication's resource base path: it loads
+  style.css from here automatically, and GtkApplication adds icons/ to the icon theme.
+-->
+<gresources>
+  <gresource prefix="/io/github/troikoss/Cera">
+    <file>window.ui</file>
+    <file>style.css</file>
+  </gresource>
+</gresources>

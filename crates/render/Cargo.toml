@@ -1,0 +1,9 @@
+[package]
+name = "cera-render"
+description = "Cera tile rasteriser (cairo + Poppler) and render worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

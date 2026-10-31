@@ -1,0 +1,16 @@
+[package]
+name = "cera"
+description = "Stylus-first handwritten notes for Linux tablets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gtk.workspace = true
+adw.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[build-dependencies]
+glib-build-tools.workspace = true

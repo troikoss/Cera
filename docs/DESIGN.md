@@ -266,6 +266,13 @@ Set budgets relative to the measured baseline (GTK + libadwaita alone is a large
 | 300-page PDF note, scrolling and zooming | baseline + ≤ 80 MiB RSS |
 | GPU textures | ≤ tile budget (48 MiB default) + wet-ink buffer |
 
+Measured baseline (release build, window open on the "Open a vault" page, idle):
+
+| Machine | RSS | PSS | Notes |
+| --- | --- | --- | --- |
+| x86 desktop, KDE Wayland, default GSK renderer | 105 MiB | 46 MiB | M0, 2026-10-31; PSS is the fairer number since GTK's shared libs count in full in RSS |
+| Target tablet | — | — | to record in M0 testing |
+
 How we check:
 
 - `CERA_DEBUG=1` overlay: tile count / bytes per layer, worker queue length, frame time.
