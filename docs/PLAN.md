@@ -7,7 +7,8 @@ How we get from an empty repo to a daily-usable app. Architecture and reasoning 
 tablet; the next milestone starts after your feedback. Each milestone ends with something you
 can run, plus a short "test on the tablet" list.
 
-**Status:** M0 and the M1 spike implemented; both waiting for a tablet test and feedback.
+**Status:** M0 and M1 run on the tablet. M2 implemented, waiting for review. Still to record
+from the tablet: M0 baseline RSS, the M1 stylus log and renderer choice.
 
 ## M0 — Skeleton
 
@@ -47,16 +48,21 @@ rest your palm while writing; note which renderer feels best.
 
 ## M2 — Core and file format (`crates/core`, `crates/cli`)
 
-- [ ] Types: `Document`, `PageSpec`, `Paper`, `Background`, `Stroke`, `Point`, `Tool`, `Rgba8`
-- [ ] Stroke encoder/decoder (absolute first point, zig-zag varint deltas in 1/64 pt, u8 pressure)
-- [ ] Container: header, 4 KiB-aligned asset blobs, chunk log with CRC32, manifest, footer
-- [ ] Open: footer → manifest; lazy `PageInk` decode; backward scan on a bad footer
-- [ ] Save: append dirty chunks + manifest + footer, fsync; compaction via temp file + rename
-- [ ] PDF import (Poppler in `crates/render`, called from the CLI): page count, sizes, embed bytes
-- [ ] Undo/redo command log (`AddStrokes`, `RemoveStrokes`, `TransformStrokes`, page ops), capped
-- [ ] `cera-cli import <pdf> <out.cera>`, `info <file>`, `compact <file>`
-- [ ] Tests: encode/decode round-trip (proptest), save/open round-trip, truncate-at-every-byte
+- [x] Types: `Document`, `PageSpec`, `Paper`, `Background`, `Stroke`, `Point`, `Tool`, `Rgba8`
+- [x] Stroke encoder/decoder (absolute first point, zig-zag varint deltas in 1/64 pt, u8 pressure)
+- [x] Container: header, 4 KiB-aligned asset blobs, chunk log with CRC32, manifest, footer
+- [x] Open: footer → manifest; lazy `PageInk` decode; backward scan on a bad footer
+- [x] Save: append dirty chunks + manifest + footer, fsync; compaction via temp file + rename
+- [x] PDF import (Poppler in `crates/render`, called from the CLI): page count, sizes, embed bytes
+- [x] Undo/redo command log (`AddStrokes`, `RemoveStrokes`, `ReplaceStrokes` for transforms and
+      recolouring, page ops), capped
+- [x] `cera-cli import <pdf> <out.cera>`, `info <file>`, `compact <file>`, plus `scribble <file>`
+      to exercise saves
+- [x] Tests: encode/decode round-trip (proptest), save/open round-trip, truncate-at-every-byte
       recovery, compaction keeps content identical
+
+**Test on the tablet:** `cargo test --workspace`; import a long PDF and a scanned one with
+`cera-cli import`; `info` (page sizes, open time); `scribble` a few times, then `compact`.
 
 **Done when:** all tests pass and `cera-cli info` on an imported 300-page PDF prints correct
 page sizes instantly.

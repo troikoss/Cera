@@ -161,36 +161,49 @@ scrolls nor draws. Optional "draw with finger" setting turns one-finger touch in
 One self-contained file per note. Append-only log so autosave is cheap and crash-safe.
 
 ```
-┌───────────────────────────────────────────────┐
-│ Header (64 B)  magic "CERANOTE", version, flags │
-├───────────────────────────────────────────────┤
-│ Asset blobs   original PDF bytes, 4 KiB-aligned │  ← mmap'd and given to Poppler as-is
-├───────────────────────────────────────────────┤
-│ Chunk log     [kind u8][len u32][crc32][payload]│
-│   PageInk     page id + encoded strokes         │
-│   Thumbnail   first page, small PNG/WebP        │
-│   Manifest    page order, page specs, assets,   │
-│               offset of each page's latest ink  │
-│   ... later chunks appended on each save ...    │
-├───────────────────────────────────────────────┤
-│ Footer (32 B)  manifest offset, generation, crc │  ← always at EOF
-└───────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│ Header (64 B)  "CERANOTE", version u32, flags u32, crc │
+├─────────────────────────────────────────────────────┤
+│ Asset blobs   original PDF bytes, 4 KiB-aligned       │  ← mmap'd and given to Poppler as-is
+├─────────────────────────────────────────────────────┤
+│ Chunk log     [kind u8][len u32][crc32][payload]      │  crc covers kind, len and payload
+│   PageInk     encoding, page id, encoded strokes      │
+│   Thumbnail   (kind 2, reserved for M5)               │
+│   Manifest    page order, page specs, assets,         │
+│               location of each page's latest ink      │
+│   ... later chunks appended on each save ...          │
+├─────────────────────────────────────────────────────┤
+│ Footer (32 B)  "CERAFOOT", generation, manifest       │  ← always at EOF
+│                offset + length, crc                   │
+└─────────────────────────────────────────────────────┘
 ```
 
-- **Open:** read footer → manifest → nothing else. Page ink is decoded lazily when a page
-  approaches the viewport. If the footer is bad (crash mid-save), scan backwards for the
-  last valid footer.
-- **Save:** append changed `PageInk` chunks + new `Manifest` + footer, then fsync.
-  Debounced autosave ~2 s after the last edit and on tab close.
-- **Compact:** when dead bytes exceed 50 % (or on demand), write a fresh file to a temp
-  path and atomically rename it. Existing mmaps stay valid because they point at the old inode.
-- **Page spec:** size in pt, paper (blank / ruled / grid / dots + spacing, colour), optional
-  `Pdf { asset, page_index }` background.
-- **Stroke encoding:** tool, RGBA, base width, point count; first point absolute, then
-  zig-zag varint deltas in 1/64 pt; pressure as u8. Typically 3–5 bytes per point on disk.
-  In memory: `Box<[Point { x: f32, y: f32, p: f32 }]>` for the pages that are loaded.
-- **Versioning:** header version + postcard manifest with an explicit version field;
-  unknown chunk kinds are skipped, so newer files mostly open in older builds.
+Code: `crates/core/src/format.rs` (layout), `codec.rs` (strokes), `file.rs` (open/save/compact).
+
+- **Open:** read footer → manifest → nothing else (~60 µs for a 324-page note). Page ink is
+  decoded lazily (`Document::load_ink`) from the mmap. If the last footer is bad (crash
+  mid-save), scan backwards for the newest valid one. The bytes after it are left in place and
+  counted as dead, never truncated, so a bug can't destroy data on open. A footer from a newer
+  format version stops the scan with an error instead of silently falling back.
+- **Save:** append changed `PageInk` chunks + new `Manifest`, fsync, then write the footer and
+  fsync again, so a footer never points at chunks that didn't reach the disk.
+  Debounced autosave ~2 s after the last edit and on tab close (M4).
+- **Compact:** due when dead bytes exceed both 1 MiB and the live ink + manifest size (or on
+  demand). Writes a fresh file to `.<name>.tmp` and renames it over. Existing mmaps stay valid
+  because they point at the old inode. Assets no page uses are dropped, except those the undo
+  history could bring back.
+- **Page spec:** size in pt, paper (blank / ruled / grid / dots + spacing, line and fill
+  colour), optional `Pdf { asset, page }` background.
+- **Stroke encoding:** tool, RGBA, base width, point count; points as zig-zag varint deltas in
+  1/64 pt (the first from (0, 0), so absolute); pressure as u8. 3–5 bytes per point on disk.
+  `Stroke::new` rounds to that precision, so a stroke is identical after save and reopen.
+  In memory: `Box<[Point { x: f32, y: f32, pressure: f32 }]>` for the pages that are loaded.
+- **Versioning:** header version, a version byte in each `PageInk` payload, and a postcard
+  manifest whose first field is its version. A golden-bytes test pins the manifest encoding.
+  Chunks are only reached through the manifest, so unknown kinds are skipped.
+- **Undo** (`crates/core/src/undo.rs`): `History` is the only way to edit ink and pages.
+  Commands: `AddStrokes`, `RemoveStrokes`, `ReplaceStrokes` (lasso move/scale, recolour),
+  `InsertPage`, `RemovePage`, `MovePage`, `SetPageSpec`; capped at 500 steps.
 - **Known risk:** a sync tool that rewrites the file *in place* (rather than replace-by-rename)
   while it's mmap'd can crash the app (SIGBUS). Most sync tools rename. Revisit if it bites.
 
