@@ -1,0 +1,16 @@
+/target/
+**/*.rs.bk
+*.pdb
+
+# Flatpak build output
+/.flatpak-builder/
+/build-dir/
+/repo/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Local test data
+/testdata/local/
