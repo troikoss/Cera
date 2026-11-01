@@ -185,8 +185,10 @@ Code: `crates/render/src/ink.rs`.
 | Mouse | `GestureDrag` button 1 | draw at fixed pressure; middle-drag pans |
 | Wheel | `EventControllerScroll` | scroll; Ctrl + wheel zooms |
 
-**Tablet pen** (Galaxy Tab S9): "Wacom WEZ01 S Pen" with pen and eraser tools, one barrel
-button (`BTN_STYLUS`), pressure, hover distance and tilt.
+**Tablet pen** (Galaxy Tab S9): "Wacom WEZ01 S Pen" (`/dev/input/event2`, libinput capability
+`tablet`) with pen and eraser tools, one barrel button (`BTN_STYLUS`), pressure 0–4095,
+hover distance 0–255, tilt ±63° on both axes, and positions in 1/100 mm over a 236 × 148 mm
+area (read with `EVIOCGABS`, 2026-11-01).
 
 **Palm rejection** (`crates/app/src/palm.rs`): a capture-phase controller on the canvas's
 overlay swallows touch sequences that begin within 500 ms of the last pen event, or while the
