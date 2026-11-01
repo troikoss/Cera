@@ -169,6 +169,11 @@ impl<T> TileCache<T> {
         self.budget
     }
 
+    pub fn set_budget(&mut self, budget: usize) {
+        self.budget = budget;
+        self.evict();
+    }
+
     /// Drops least recently drawn tiles until within budget, never ones from this frame.
     fn evict(&mut self) {
         while self.bytes > self.budget {

@@ -19,7 +19,7 @@ mod undo;
 pub use error::{Error, Result};
 pub use file::{AssetInfo, MappedBytes, NewAsset, NoteFile};
 pub use format::{AssetKind, FORMAT_VERSION};
-pub use geom::Rect;
+pub use geom::{Rect, polygon_contains};
 pub use model::{
     AssetId, Background, Document, Page, PageId, PageSpec, Paper, PaperKind, Point, Rgba8, Stroke,
     Tool,

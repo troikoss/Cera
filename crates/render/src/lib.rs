@@ -6,6 +6,7 @@
 
 pub mod import;
 pub mod ink;
+pub mod page;
 pub mod pdf;
 pub mod tile;
 pub mod worker;

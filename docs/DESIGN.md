@@ -181,7 +181,7 @@ Code: `crates/render/src/ink.rs`.
 | Stylus barrel button | same, button mask (`BUTTON2`/`BUTTON3`) at pen-down | hold → temporary eraser (configurable: lasso). `GestureStylus` emits *down*/*up* for every button, so a barrel press while hovering also arrives as *down*: only button 1 starts or ends a stroke |
 | One finger | `GtkScrolledWindow`'s own touch pan | scroll with kinetic momentum |
 | Two fingers | `GestureZoom` | pinch zoom around the centroid |
-| Two-/three-finger tap | `GestureClick` (touch) | undo / redo (setting) |
+| Two-/three-finger tap | legacy controller on the tab view (`touch.rs`) | undo / redo (setting); taps are watched, not claimed |
 | Mouse | `GestureDrag` button 1 | draw at fixed pressure; middle-drag pans |
 | Wheel | `EventControllerScroll` | scroll; Ctrl + wheel zooms |
 
@@ -191,8 +191,17 @@ button (`BTN_STYLUS`), pressure, hover distance and tilt.
 **Palm rejection** (`crates/app/src/palm.rs`): a capture-phase controller on the canvas's
 overlay swallows touch sequences that begin within 500 ms of the last pen event, or while the
 pen is in proximity (capped at 5 s without pen events, in case a proximity-out is lost). Whole
-sequences are kept or swallowed, never split. Optional "draw with finger" setting (M6) turns
-one-finger touch into drawing.
+sequences are kept or swallowed, never split. Optional "draw with finger" setting turns
+one-finger touch into drawing: `touch.rs` (on the tab view, so palm rejection on its parent
+runs first) then takes every touch, draws with one finger, and pans and zooms with two; a
+second finger within 250 ms turns a just-started stroke into a pinch.
+
+**Lasso** (`crates/app/src/canvas/lasso.rs`): strokes with more than half of their points
+inside the loop are selected. Selected strokes leave the page's ink tiles and are drawn from
+one texture (at most 2048 px, 16 MiB) made when the selection is, so dragging redraws no tile.
+A move or recolour is one `ReplaceStrokes` step; afterwards the strokes rejoin the tiles and
+the texture stays as a "ghost" until the tiles have caught up, as wet ink does. The clipboard
+is process-wide, so strokes paste into any open note.
 
 **Eraser:** removes whole strokes whose ink comes within 10 logical px of the eraser (bounds
 check, then distance to each segment). One drag is one undo step (`History` groups).
@@ -300,13 +309,18 @@ AdwApplicationWindow
          └─ AdwTabView → per tab: GtkOverlay
             ├─ GtkScrolledWindow > Canvas
             └─ floating pill (bottom centre):
-               AdwToggleGroup [pen | highlighter | eraser | lasso] │ 3 colour swatches │ [add page]
+               AdwToggleGroup [pen | highlighter | eraser | lasso] │ 3 colour swatches
+               [cut copy paste delete] (lasso only) │ [add page]
 ```
 
 - **Tools:** tap the active tool again → popover with width presets and pressure toggle.
-  Long-press a swatch → palette (`AdwWrapBox`) + `GtkColorDialog`.
-- **Pages button:** `AdwDialog` (or `AdwBottomSheet` when narrow) with a `GtkGridView` of page
-  thumbnails: drag to reorder, insert blank before/after, delete, change paper.
+  Long-press a swatch → palette (`AdwWrapBox`) + `GtkColorDialog`. With the lasso, the
+  swatches recolour the selection and cut, copy, paste and delete buttons appear. Tool
+  settings and palettes are app settings (`~/.config/cera/settings.json`).
+- **Pages button:** `AdwDialog` (a bottom sheet when narrow) with a `GtkGridView` of page
+  thumbnails: move earlier/later, insert blank before/after, delete, change paper. Thumbnails
+  are whole-page render jobs (`Layer::Page`) under their own document id, asked for only for
+  the cells on screen and kept in a 16 MiB LRU while the dialog is open.
 - **Import:** drop a PDF on the sidebar/window or use + → Import PDF… → `AdwDialog` with
   `AdwEntryRow` (name), `AdwComboRow` (folder), page range, keep original.
 - **No vault open:** `AdwStatusPage` "Open a vault" with "Open folder" / "Create vault" and a
@@ -315,7 +329,8 @@ AdwApplicationWindow
 - **Dark mode:** UI follows `AdwStyleManager`; paper stays white by default (dark paper is a
   later option).
 - **Keyboard:** Ctrl+Z / Ctrl+Shift+Z, P / H / E / L for tools, Ctrl+± and Ctrl+0 (fit width),
-  F9 sidebar.
+  F9 sidebar, Ctrl+X/C/V and Delete for the selection, Ctrl+P pages; Ctrl+? lists them all.
+  Keys that text fields also use are bubble-phase window shortcuts, not app accelerators.
 - Touch targets ≥ 40 px in the tool bar.
 
 ## 10. Memory budget and measurement

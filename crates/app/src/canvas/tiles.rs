@@ -122,13 +122,26 @@ impl Canvas {
             if failed.contains(&(doc.id, id, Layer::Ink)) {
                 continue;
             }
-            let strokes = match note.doc.load_ink(i) {
+            let all = match note.doc.load_ink(i) {
                 Ok(strokes) => strokes,
                 Err(e) => {
                     tracing::warn!(page = id, "cannot read ink: {e}");
                     failed.insert((doc.id, id, Layer::Ink));
                     continue;
                 }
+            };
+            // Selected strokes are drawn from the selection's texture instead.
+            let hidden = self.hidden_on(id);
+            let kept: Vec<_>;
+            let strokes = if hidden.is_empty() {
+                all
+            } else {
+                kept = all
+                    .iter()
+                    .filter(|s| !hidden.iter().any(|h| std::sync::Arc::ptr_eq(s, h)))
+                    .cloned()
+                    .collect();
+                &kept[..]
             };
             if strokes.is_empty() {
                 cache.remove_page(&(doc.id, id, Layer::Ink));
@@ -280,6 +293,7 @@ impl Canvas {
                     draw_wet(snapshot, &cache, doc.id, w, &page, view.zoom);
                 }
             }
+            self.draw_lasso_layer(snapshot, &cache, doc.id, id, &page, view.zoom);
         }
         // Older zoom levels were only needed until the settled one arrived.
         for page in covered {
@@ -288,6 +302,7 @@ impl Canvas {
         // Finished strokes leave the wet layer once every tile they touch has caught up, or
         // once their page is off screen (its tiles are re-rendered when it comes back).
         wet.retain(|w| on_screen.contains(&w.page) && !caught_up(&cache, doc.id, w));
+        self.prune_ghosts(&cache, doc.id, &on_screen);
 
         if let Some((x, y)) = imp.eraser_cursor.get() {
             let r = ERASER_RADIUS as f32;

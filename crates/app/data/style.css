@@ -39,3 +39,14 @@ label.debug-overlay {
   background-color: alpha(var(--accent-bg-color), 0.25);
   box-shadow: none;
 }
+
+/* Page thumbnails in the page sorter: white paper on the dialog background. */
+picture.page-thumb {
+  background-color: white;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 25%);
+}
+
+gridview > child:selected picture.page-thumb {
+  outline: 3px solid var(--accent-bg-color);
+  outline-offset: 2px;
+}

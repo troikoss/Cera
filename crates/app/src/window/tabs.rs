@@ -35,6 +35,7 @@ impl CeraWindow {
                 }
                 win.update_title();
                 win.update_note_actions();
+                win.update_toolbar();
                 win.schedule_workspace_save();
             }
         ));
@@ -128,6 +129,7 @@ impl CeraWindow {
         canvas.set_renderer(self.renderer());
         canvas.set_tools(imp.tool_state.clone());
         canvas.set_active(false);
+        canvas.set_tile_budget((crate::settings::with(|s| s.tile_budget_mib) as usize) << 20);
         canvas.set_note(Some(note));
         if let Some(page) = page {
             canvas.show_page(page);
@@ -152,6 +154,24 @@ impl CeraWindow {
                 #[upgrade_or_default]
                 move |_| {
                     win.edited(&canvas);
+                    None
+                }
+            ),
+        );
+        canvas.connect_local(
+            "selection-changed",
+            false,
+            glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                #[weak]
+                canvas,
+                #[upgrade_or_default]
+                move |_| {
+                    if win.canvas().as_ref() == Some(&canvas) {
+                        win.update_note_actions();
+                        win.update_toolbar();
+                    }
                     None
                 }
             ),
@@ -310,6 +330,7 @@ impl CeraWindow {
             (n.history.can_undo(), n.history.can_redo())
         });
         let has_note = note.is_some();
+        let selection = self.canvas().is_some_and(|c| c.has_selection());
         for (name, enabled) in [
             ("undo", can_undo),
             ("redo", can_redo),
@@ -317,6 +338,13 @@ impl CeraWindow {
             ("zoom-out", has_note),
             ("zoom-fit", has_note),
             ("close-tab", has_note),
+            ("pages", has_note),
+            ("add-page", has_note),
+            ("cut", selection),
+            ("copy", selection),
+            ("delete-selection", selection),
+            ("select-none", selection),
+            ("paste", has_note && crate::canvas::has_clipboard()),
         ] {
             self.set_action_enabled(name, enabled);
         }

@@ -1,11 +1,17 @@
 //! The main window: vault sidebar, one tab per open note, and the floating tool bar.
 //!
-//! - `mod.rs`: widgets, actions and the tool bar.
+//! - `mod.rs`: widgets, actions and keyboard shortcuts.
+//! - `toolbar.rs`: the floating tool bar, its width and palette popovers.
 //! - `tabs.rs`: notes in tabs: opening, autosave, closing, restoring the workspace.
 //! - `files.rs`: the vault: opening one; creating, renaming, moving, trashing and importing.
+//! - `pages.rs`: the page sorter.
+//! - `prefs.rs`: preferences and the shortcuts list.
 
 mod files;
+mod pages;
+mod prefs;
 mod tabs;
+mod toolbar;
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
@@ -20,7 +26,7 @@ use cera_render::tile::DocId;
 use cera_render::worker::{Renderer, TileResult};
 use gtk::{gdk, gio, glib};
 
-use crate::canvas::{Canvas, HIGHLIGHTER_COLORS, PEN_COLORS, ToolKind, Tools};
+use crate::canvas::{Canvas, Tools};
 use crate::sidebar::Sidebar;
 use crate::swatch::Swatch;
 use crate::vault::{Vault, Workspace};
@@ -54,6 +60,10 @@ mod imp {
         pub toolbar: TemplateChild<gtk::Box>,
         #[template_child]
         pub tools: TemplateChild<adw::ToggleGroup>,
+        #[template_child]
+        pub swatch_box: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub selection_box: TemplateChild<gtk::Box>,
         pub(super) tool_state: Rc<Tools>,
         pub(super) swatches: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
         pub(super) renderer: OnceCell<Rc<Renderer>>,
@@ -93,7 +103,13 @@ mod imp {
             obj.setup_toolbar();
             obj.setup_tabs();
             obj.setup_drop();
+            obj.setup_shortcuts();
+            // Palm rejection on the overlay sees touches before the finger gestures on the
+            // tab view inside it (capture runs from parent to child).
             self.note_overlay.add_controller(crate::palm::controller());
+            let weak = obj.downgrade();
+            self.tab_view
+                .add_controller(crate::touch::controller(move || weak.upgrade()?.canvas()));
             obj.rebuild_recent();
             obj.update_stack();
             if crate::debug_enabled() {
@@ -240,6 +256,17 @@ impl CeraWindow {
             }),
             canvas_action("undo", Canvas::undo),
             canvas_action("redo", Canvas::redo),
+            canvas_action("cut", Canvas::cut_selection),
+            canvas_action("copy", |c| {
+                c.copy_selection();
+            }),
+            canvas_action("delete-selection", Canvas::delete_selection),
+            canvas_action("select-none", Canvas::clear_selection),
+            simple("paste", Self::paste),
+            simple("add-page", Self::add_page),
+            simple("pages", Self::show_pages),
+            simple("preferences", Self::show_preferences),
+            simple("shortcuts", Self::show_shortcuts),
             canvas_action("zoom-in", |c| c.zoom_step(1)),
             canvas_action("zoom-out", |c| c.zoom_step(-1)),
             canvas_action("zoom-fit", Canvas::zoom_fit_width),
@@ -248,66 +275,53 @@ impl CeraWindow {
         self.update_note_actions();
     }
 
-    /// Tool toggles set the shared tool; three swatches show the pen's or the highlighter's
-    /// colours.
-    fn setup_toolbar(&self) {
-        let imp = self.imp();
-        imp.tools.connect_active_name_notify(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |group| {
-                let tool = group
-                    .active_name()
-                    .as_deref()
-                    .and_then(ToolKind::from_name)
-                    .unwrap_or(ToolKind::Pen);
-                win.imp().tool_state.tool.set(tool);
-                win.update_swatches();
-            }
-        ));
-        let mut first: Option<gtk::ToggleButton> = None;
-        for i in 0..3 {
-            let swatch = Swatch::new(gdk::RGBA::BLACK);
-            let button = gtk::ToggleButton::builder()
-                .child(&swatch)
-                .css_classes(["flat"])
-                .tooltip_text("Colour")
+    /// Keys that text fields also use (letters, Delete, Ctrl+C…) only act here when the
+    /// focused widget doesn't take them, so they are handled in the bubble phase rather than
+    /// as application accelerators.
+    fn setup_shortcuts(&self) {
+        let controller = gtk::ShortcutController::new();
+        controller.set_propagation_phase(gtk::PropagationPhase::Bubble);
+        let shortcuts: [(&str, &str, Option<&str>); 13] = [
+            ("p", "win.tool", Some("pen")),
+            ("h", "win.tool", Some("highlighter")),
+            ("e", "win.tool", Some("eraser")),
+            ("l", "win.tool", Some("lasso")),
+            ("<Control>z", "win.undo", None),
+            ("<Control><Shift>z|<Control>y", "win.redo", None),
+            ("<Control>x", "win.cut", None),
+            ("<Control>c", "win.copy", None),
+            ("<Control>v", "win.paste", None),
+            ("Delete|BackSpace", "win.delete-selection", None),
+            ("Escape", "win.select-none", None),
+            ("<Control>Return", "win.add-page", None),
+            ("<Control>p", "win.pages", None),
+        ];
+        for (keys, action, target) in shortcuts {
+            let shortcut = gtk::Shortcut::builder()
+                .trigger(&gtk::ShortcutTrigger::parse_string(keys).expect("valid trigger"))
+                .action(&gtk::NamedAction::new(action))
                 .build();
-            button.set_group(first.as_ref());
-            first.get_or_insert_with(|| button.clone());
-            button.connect_toggled(glib::clone!(
-                #[weak(rename_to = win)]
-                self,
-                move |b| {
-                    if b.is_active() {
-                        win.imp().tool_state.set_color(win.palette()[i]);
-                    }
-                }
-            ));
-            imp.toolbar.append(&button);
-            imp.swatches.borrow_mut().push((button, swatch));
-        }
-        self.update_swatches();
-    }
-
-    fn palette(&self) -> [Rgba8; 3] {
-        match self.imp().tool_state.tool.get() {
-            ToolKind::Highlighter => HIGHLIGHTER_COLORS,
-            _ => PEN_COLORS,
-        }
-    }
-
-    fn update_swatches(&self) {
-        let imp = self.imp();
-        let palette = self.palette();
-        let current = imp.tool_state.color();
-        let drawing = imp.tool_state.tool.get() != ToolKind::Eraser;
-        for (i, (button, swatch)) in imp.swatches.borrow().iter().enumerate() {
-            swatch.set_color(rgba(palette[i]));
-            button.set_sensitive(drawing);
-            if palette[i] == current {
-                button.set_active(true);
+            if let Some(target) = target {
+                shortcut.set_arguments(Some(&target.to_variant()));
             }
+            controller.add_shortcut(shortcut);
+        }
+        self.add_controller(controller);
+    }
+
+    /// Pastes into the selected tab and switches to the lasso to move what was pasted.
+    fn paste(&self) {
+        if let Some(canvas) = self.canvas()
+            && canvas.paste()
+        {
+            self.imp().tools.set_active_name(Some("lasso"));
+        }
+    }
+
+    fn add_page(&self) {
+        let paper = self.new_page_paper();
+        if let Some(canvas) = self.canvas() {
+            canvas.add_page(|spec| pages::blank_like(spec, paper));
         }
     }
 

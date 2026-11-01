@@ -5,11 +5,13 @@
 //! - `tiles.rs`: asking the render workers for PDF and ink tiles, and drawing a frame.
 //! - `input.rs`: stylus, mouse and eraser; strokes go into the note through its `History`.
 //! - `wet.rs`: the stroke being drawn, until its finished tiles arrive.
+//! - `lasso.rs`: selecting, moving, recolouring, cutting and pasting strokes.
 //!
 //! `snapshot` only appends cached textures and colour nodes.
 
 mod cache;
 mod input;
+mod lasso;
 mod layout;
 mod tiles;
 mod wet;
@@ -28,13 +30,16 @@ use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use self::cache::TileCache;
-pub use self::input::{HIGHLIGHTER_COLORS, PEN_COLORS, ToolKind, Tools};
+pub use self::input::{
+    HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTHS, PEN_COLORS, PEN_WIDTHS, ToolKind, Tools,
+};
+pub use self::lasso::has_clipboard;
 use self::layout::{Layout, View};
 use self::wet::WetStroke;
 use crate::note::SharedNote;
 
-/// Tile cache budget (DESIGN.md §5). It counts the CPU copy of each texture; GSK keeps GPU
-/// copies of recently drawn tiles on top.
+/// Default tile cache budget (DESIGN.md §5; a preference). It counts the CPU copy of each
+/// texture; GSK keeps GPU copies of recently drawn tiles on top.
 const TILE_BUDGET: usize = 128 << 20;
 /// Request new tiles this long after the zoom stops changing.
 const SETTLE: Duration = Duration::from_millis(150);
@@ -113,6 +118,9 @@ mod imp {
         pub(super) active: RefCell<Option<input::Active>>,
         /// Finished strokes still shown wet until their tiles arrive.
         pub(super) wet: RefCell<Vec<WetStroke>>,
+        pub(super) lasso: RefCell<Option<lasso::LassoPath>>,
+        pub(super) selection: RefCell<Option<lasso::Selection>>,
+        pub(super) ghosts: RefCell<Vec<lasso::Ghost>>,
         pub(super) erasing: Cell<bool>,
         pub(super) eraser_cursor: Cell<Option<(f64, f64)>>,
         pub(super) tools: RefCell<Rc<Tools>>,
@@ -145,6 +153,9 @@ mod imp {
                 ink_expected: RefCell::default(),
                 active: RefCell::default(),
                 wet: RefCell::default(),
+                lasso: RefCell::default(),
+                selection: RefCell::default(),
+                ghosts: RefCell::default(),
                 erasing: Cell::new(false),
                 eraser_cursor: Cell::new(None),
                 tools: RefCell::default(),
@@ -186,8 +197,14 @@ mod imp {
 
         fn signals() -> &'static [glib::subclass::Signal] {
             static SIGNALS: OnceLock<Vec<glib::subclass::Signal>> = OnceLock::new();
-            // After every edit, undo or redo: for autosave and the undo buttons.
-            SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("changed").build()])
+            SIGNALS.get_or_init(|| {
+                vec![
+                    // After every edit, undo or redo: for autosave and the undo buttons.
+                    glib::subclass::Signal::builder("changed").build(),
+                    // A lasso selection was made or ended.
+                    glib::subclass::Signal::builder("selection-changed").build(),
+                ]
+            })
         }
 
         fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
@@ -326,6 +343,7 @@ impl Canvas {
             imp.cache.borrow_mut().remove_doc(id);
             imp.ink_expected.borrow_mut().clear();
             imp.wet.borrow_mut().clear();
+            imp.ghosts.borrow_mut().clear();
         }
     }
 
@@ -358,6 +376,9 @@ impl Canvas {
         }
         imp.active.take();
         imp.wet.borrow_mut().clear();
+        imp.lasso.take();
+        imp.selection.take();
+        imp.ghosts.borrow_mut().clear();
         imp.ink_gen.borrow_mut().clear();
         imp.ink_expected.borrow_mut().clear();
         if let Some(note) = &note {
@@ -415,6 +436,7 @@ impl Canvas {
         let Some(note) = self.imp().note.borrow().clone() else {
             return;
         };
+        self.clear_selection();
         let result = step(&mut note.borrow_mut());
         match result {
             Ok(Some(changes)) => {
@@ -429,16 +451,67 @@ impl Canvas {
     /// Redraws what an undo or redo changed.
     fn apply_changes(&self, note: &SharedNote, changes: &Changes) {
         if changes.layout {
-            let note = note.borrow();
-            *self.imp().doc.borrow_mut() = Some(CanvasDoc::new(note.id, &note.doc));
-            drop(note);
-            self.configure_adjustments(None);
-            self.notify("page-count");
+            self.layout_changed(note);
         }
         for &(page, area) in &changes.ink {
             self.invalidate_ink(page, area);
         }
         self.request_tiles();
+        self.queue_draw();
+    }
+
+    /// Pages were added, removed, moved or changed paper.
+    fn layout_changed(&self, note: &SharedNote) {
+        {
+            let note = note.borrow();
+            *self.imp().doc.borrow_mut() = Some(CanvasDoc::new(note.id, &note.doc));
+        }
+        self.configure_adjustments(None);
+        self.update_current_page();
+        self.request_tiles();
+        self.queue_draw();
+        self.notify("page-count");
+    }
+
+    /// Runs a page edit (insert, delete, move, paper) through the note, then lays the pages
+    /// out again. Returns the edit's result, or `None` if it failed.
+    pub fn edit_pages<T>(
+        &self,
+        edit: impl FnOnce(&mut crate::note::Note) -> cera_core::Result<T>,
+    ) -> Option<T> {
+        self.clear_selection();
+        let note = self.note()?;
+        let result = edit(&mut note.borrow_mut());
+        match result {
+            Ok(value) => {
+                self.layout_changed(&note);
+                self.emit_by_name::<()>("changed", &[]);
+                Some(value)
+            }
+            Err(e) => {
+                tracing::warn!("page edit failed: {e}");
+                None
+            }
+        }
+    }
+
+    /// Inserts a page after the current one, with paper from `spec_for(current page)`, and
+    /// scrolls to it.
+    pub fn add_page(&self, spec_for: impl FnOnce(&PageSpec) -> PageSpec) {
+        let current = self.current_page() as usize;
+        let index = self.edit_pages(|note| {
+            let crate::note::Note { history, doc, .. } = note;
+            let spec = spec_for(doc.page(current)?.spec());
+            history.insert_page(doc, current + 1, spec)?;
+            Ok(current + 1)
+        });
+        if let Some(index) = index {
+            self.show_page(index);
+        }
+    }
+
+    pub fn set_tile_budget(&self, bytes: usize) {
+        self.imp().cache.borrow_mut().set_budget(bytes);
         self.queue_draw();
     }
 
@@ -608,6 +681,26 @@ impl Canvas {
             }
         ));
         self.add_controller(wheel);
+    }
+
+    /// Two-finger zoom and pan driven from outside (when one finger draws): call with the
+    /// fingers' centre, then with the scale since the start.
+    pub fn pinch_begin(&self, centre: (f64, f64)) {
+        let Some(view) = self.view() else { return };
+        self.imp().pinch.set(Some(Pinch {
+            zoom: self.imp().zoom.get(),
+            anchor_pt: view.to_pt(centre.0, centre.1),
+        }));
+    }
+
+    pub fn pinch_update(&self, scale: f64, centre: (f64, f64)) {
+        if let Some(p) = self.imp().pinch.get() {
+            self.apply_zoom(p.zoom * scale, p.anchor_pt, centre);
+        }
+    }
+
+    pub fn pinch_end(&self) {
+        self.imp().pinch.set(None);
     }
 
     fn set_adjustment(&self, orientation: gtk::Orientation, adj: Option<gtk::Adjustment>) {
@@ -790,6 +883,7 @@ impl Canvas {
             let imp = canvas.imp();
             imp.settle.take();
             imp.settled_zoom.set(imp.zoom.get());
+            canvas.refresh_selection_texture();
             canvas.request_tiles();
             canvas.queue_draw();
         });

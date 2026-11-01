@@ -134,6 +134,12 @@ impl Vault {
         )
     }
 
+    /// Writes `.cera/vault.json`.
+    pub fn save_config(&self) -> io::Result<()> {
+        fs::create_dir_all(self.root.join(STATE_DIR))?;
+        write_json(&self.root.join(STATE_DIR).join("vault.json"), &self.config)
+    }
+
     pub fn load_workspace(&self) -> Workspace {
         read_json(&self.workspace_path()).unwrap_or_default()
     }
@@ -202,13 +208,18 @@ impl Vault {
     }
 }
 
-pub fn recent_path() -> PathBuf {
+/// `~/.config/cera` (or under `$XDG_CONFIG_HOME`).
+pub fn config_dir() -> PathBuf {
     let config = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("."));
-    config.join("cera").join("vaults.json")
+    config.join("cera")
+}
+
+pub fn recent_path() -> PathBuf {
+    config_dir().join("vaults.json")
 }
 
 /// Recent vaults that still exist, newest first.
@@ -295,7 +306,7 @@ fn split_digits(s: &str) -> (&str, &str) {
     s.split_at(end)
 }
 
-fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
+pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     let bytes = fs::read(path).ok()?;
     match serde_json::from_slice(&bytes) {
         Ok(value) => Some(value),
@@ -308,7 +319,7 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
 
 /// Writes JSON to a temporary file next to `path` and renames it over, so a crash leaves
 /// either the old or the new file.
-fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, bytes)?;

@@ -1,4 +1,4 @@
-//! A colour dot for the tool bar's swatch buttons: a rounded clip and a colour node.
+//! A colour dot for the tool bar's swatch and width buttons: a rounded clip and a colour node.
 
 use std::cell::Cell;
 
@@ -13,12 +13,14 @@ mod imp {
 
     pub struct Swatch {
         pub(super) color: Cell<gdk::RGBA>,
+        pub(super) size: Cell<i32>,
     }
 
     impl Default for Swatch {
         fn default() -> Self {
             Self {
                 color: Cell::new(gdk::RGBA::BLACK),
+                size: Cell::new(SIZE),
             }
         }
     }
@@ -34,7 +36,8 @@ mod imp {
 
     impl WidgetImpl for Swatch {
         fn measure(&self, _orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
-            (SIZE, SIZE, -1, -1)
+            let size = self.size.get();
+            (size, size, -1, -1)
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
@@ -74,5 +77,11 @@ impl Swatch {
     pub fn set_color(&self, color: gdk::RGBA) {
         self.imp().color.set(color);
         self.queue_draw();
+    }
+
+    /// Diameter in logical pixels (22 by default); width presets use smaller dots.
+    pub fn set_size(&self, size: i32) {
+        self.imp().size.set(size);
+        self.queue_resize();
     }
 }

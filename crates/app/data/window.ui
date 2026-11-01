@@ -46,6 +46,13 @@
                     </child>
                     <child type="end">
                       <object class="GtkButton">
+                        <property name="icon-name">view-grid-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Pages</property>
+                        <property name="action-name">win.pages</property>
+                      </object>
+                    </child>
+                    <child type="end">
+                      <object class="GtkButton">
                         <property name="icon-name">edit-redo-symbolic</property>
                         <property name="tooltip-text" translatable="yes">Redo</property>
                         <property name="action-name">win.redo</property>
@@ -210,11 +217,86 @@
                                         <property name="tooltip" translatable="yes">Eraser (E)</property>
                                       </object>
                                     </child>
+                                    <child>
+                                      <object class="AdwToggle">
+                                        <property name="name">lasso</property>
+                                        <property name="icon-name">cera-lasso-symbolic</property>
+                                        <property name="tooltip" translatable="yes">Lasso (L)</property>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkSeparator" id="swatch_separator">
+                                  <object class="GtkSeparator">
                                     <property name="orientation">vertical</property>
+                                  </object>
+                                </child>
+                                <!-- Colour swatches are added in window code. -->
+                                <child>
+                                  <object class="GtkBox" id="swatch_box">
+                                    <property name="spacing">6</property>
+                                  </object>
+                                </child>
+                                <!-- Shown with the lasso. -->
+                                <child>
+                                  <object class="GtkBox" id="selection_box">
+                                    <property name="spacing">6</property>
+                                    <property name="visible">False</property>
+                                    <child>
+                                      <object class="GtkButton">
+                                        <property name="icon-name">edit-cut-symbolic</property>
+                                        <property name="tooltip-text" translatable="yes">Cut</property>
+                                        <property name="action-name">win.cut</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton">
+                                        <property name="icon-name">edit-copy-symbolic</property>
+                                        <property name="tooltip-text" translatable="yes">Copy</property>
+                                        <property name="action-name">win.copy</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton">
+                                        <property name="icon-name">edit-paste-symbolic</property>
+                                        <property name="tooltip-text" translatable="yes">Paste</property>
+                                        <property name="action-name">win.paste</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton">
+                                        <property name="icon-name">user-trash-symbolic</property>
+                                        <property name="tooltip-text" translatable="yes">Delete</property>
+                                        <property name="action-name">win.delete-selection</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkSeparator">
+                                    <property name="orientation">vertical</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkButton">
+                                    <property name="icon-name">cera-page-add-symbolic</property>
+                                    <property name="tooltip-text" translatable="yes">Add page after this one</property>
+                                    <property name="action-name">win.add-page</property>
+                                    <style>
+                                      <class name="flat"/>
+                                    </style>
                                   </object>
                                 </child>
                               </object>
@@ -240,6 +322,14 @@
       </item>
     </section>
     <section>
+      <item>
+        <attribute name="label" translatable="yes">_Preferences</attribute>
+        <attribute name="action">win.preferences</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_Keyboard Shortcuts</attribute>
+        <attribute name="action">win.shortcuts</attribute>
+      </item>
       <item>
         <attribute name="label" translatable="yes">_About Cera</attribute>
         <attribute name="action">app.about</attribute>

@@ -8,8 +8,8 @@ tablet; the next milestone starts after your feedback. Each milestone ends with 
 can run, plus a short "test on the tablet" list.
 
 **Status:** M0–M3 done and tested on the tablet. M4 implemented; the scripted demo runs on the
-tablet, waiting for your stylus test. M5 implemented, waiting for your test. Still to record:
-the M1 stylus log and renderer choice.
+tablet, waiting for your stylus test. M5 and M6 implemented, waiting for your test. Still to
+record: the M1 stylus log and renderer choice.
 
 ## M0 — Skeleton
 
@@ -147,14 +147,23 @@ an `app.win` action so scripts can run window actions over D-Bus (see `applicati
 
 ## M6 — Pages and tools
 
-- [ ] Page sorter (`AdwDialog` / `AdwBottomSheet` + `GtkGridView`): reorder, insert blank
-      before/after, delete, change paper
-- [ ] Add-page button in the tool bar
-- [ ] Lasso: select, move, delete, recolour, copy/paste between notes
-- [ ] Tool popovers: width presets, pressure toggle; colour palette (`AdwWrapBox`) + `GtkColorDialog`
-- [ ] Two-/three-finger tap for undo/redo; "draw with finger" setting
-- [ ] Preferences dialog (default paper and size, tile budget, gestures)
-- [ ] Keyboard shortcuts dialog
+- [x] Page sorter (`AdwDialog`, a bottom sheet when narrow, + `GtkGridView`): reorder, insert
+      blank before/after, delete, change paper; thumbnails are whole-page renders from the
+      render threads, only for cells on screen, 16 MiB LRU
+- [x] Add-page button in the tool bar (Ctrl+Enter)
+- [x] Lasso: select, move, delete, recolour, cut/copy/paste between notes
+- [x] Tool popovers: tap the active pen or highlighter for width presets and pressure; hold a
+      swatch for the palette (`AdwWrapBox`) + `GtkColorDialog`
+- [x] Two-/three-finger tap for undo/redo; "draw with finger" setting
+- [x] Preferences dialog (paper and size for new notes in the vault, tile budget, gestures)
+- [x] Keyboard shortcuts dialog
+
+Single-key shortcuts (tools), Delete, Escape, undo and the clipboard live in a bubble-phase
+shortcut controller on the window, so text fields keep those keys.
+
+**Test on the tablet:** lasso a few words and drag them; recolour; copy into another note;
+reorder and delete pages in the sorter and undo; two-finger tap to undo; turn on "draw with
+finger" and write, then pinch.
 
 ## M7 — Export and packaging
 

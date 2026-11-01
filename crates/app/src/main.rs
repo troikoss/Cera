@@ -5,8 +5,10 @@ mod canvas;
 mod dialogs;
 mod note;
 mod palm;
+mod settings;
 mod sidebar;
 mod swatch;
+mod touch;
 mod vault;
 mod window;
 

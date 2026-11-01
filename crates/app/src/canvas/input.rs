@@ -44,6 +44,7 @@ pub enum ToolKind {
     Pen,
     Highlighter,
     Eraser,
+    Lasso,
 }
 
 impl ToolKind {
@@ -52,13 +53,19 @@ impl ToolKind {
             ToolKind::Pen => "pen",
             ToolKind::Highlighter => "highlighter",
             ToolKind::Eraser => "eraser",
+            ToolKind::Lasso => "lasso",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        [ToolKind::Pen, ToolKind::Highlighter, ToolKind::Eraser]
-            .into_iter()
-            .find(|t| t.name() == name)
+        [
+            ToolKind::Pen,
+            ToolKind::Highlighter,
+            ToolKind::Eraser,
+            ToolKind::Lasso,
+        ]
+        .into_iter()
+        .find(|t| t.name() == name)
     }
 }
 
@@ -100,7 +107,7 @@ impl Tools {
         match self.tool.get() {
             ToolKind::Highlighter => self.highlighter_color.set(color),
             ToolKind::Pen => self.pen_color.set(color),
-            ToolKind::Eraser => {}
+            ToolKind::Eraser | ToolKind::Lasso => {}
         }
     }
 
@@ -116,7 +123,7 @@ impl Tools {
         match self.tool.get() {
             ToolKind::Highlighter => self.highlighter_width.set(width),
             ToolKind::Pen => self.pen_width.set(width),
-            ToolKind::Eraser => {}
+            ToolKind::Eraser | ToolKind::Lasso => {}
         }
     }
 }
@@ -283,6 +290,11 @@ impl Canvas {
         let Some(note) = imp.note.borrow().clone() else {
             return;
         };
+        if !eraser && self.tool() == ToolKind::Lasso {
+            self.lasso_begin(s.x, s.y);
+            return;
+        }
+        self.clear_selection();
         if eraser || self.tool() == ToolKind::Eraser {
             note.borrow_mut().history.begin_group();
             imp.erasing.set(true);
@@ -335,6 +347,12 @@ impl Canvas {
             }
             return;
         }
+        if self.lasso_active() {
+            for s in samples {
+                self.lasso_extend(s.x, s.y);
+            }
+            return;
+        }
         let Some(view) = self.view() else { return };
         let mut active = imp.active.borrow_mut();
         let Some(a) = active.as_mut() else { return };
@@ -364,10 +382,61 @@ impl Canvas {
             self.emit_by_name::<()>("changed", &[]);
             return;
         }
+        if self.lasso_active() {
+            self.lasso_end();
+            return;
+        }
         let Some(active) = imp.active.take() else {
             return;
         };
         self.commit(active);
+    }
+
+    /// Drops what a touch started (a stroke, an erase, a loop) when it turns into a pinch.
+    fn cancel(&self) {
+        let imp = self.imp();
+        if imp.erasing.replace(false) {
+            if let Some(note) = imp.note.borrow().as_ref() {
+                note.borrow_mut().history.end_group();
+            }
+            imp.eraser_cursor.set(None);
+            self.emit_by_name::<()>("changed", &[]);
+        }
+        imp.active.take();
+        self.lasso_cancel();
+        self.queue_draw();
+    }
+
+    /// One-finger drawing ("draw with finger"): touches arrive here instead of panning.
+    pub fn touch_begin(&self, x: f64, y: f64, time: u32) {
+        let pressure = MOUSE_PRESSURE;
+        self.begin(
+            Sample {
+                x,
+                y,
+                pressure,
+                time,
+            },
+            false,
+        );
+    }
+
+    pub fn touch_extend(&self, x: f64, y: f64, time: u32) {
+        let pressure = MOUSE_PRESSURE;
+        self.extend(&[Sample {
+            x,
+            y,
+            pressure,
+            time,
+        }]);
+    }
+
+    pub fn touch_end(&self) {
+        self.end();
+    }
+
+    pub fn touch_cancel(&self) {
+        self.cancel();
     }
 
     /// Simplifies the samples into a stroke, adds it to the note and asks for its tiles; the

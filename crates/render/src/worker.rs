@@ -13,7 +13,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::Instant;
 
-use cera_core::{AssetId, MappedBytes, Rgba8, Stroke};
+use cera_core::{AssetId, Background, MappedBytes, PageSpec, Rgba8, Stroke};
 
 use crate::ink;
 use crate::tile::{DocId, Grid, PixelRect, TILE_PX, TileKey};
@@ -31,6 +31,26 @@ pub enum JobSource {
     },
     /// These strokes, in page order, on a transparent tile.
     Ink(Vec<Arc<Stroke>>),
+    /// The whole page: paper, PDF background and these strokes (thumbnails). Use a scale at
+    /// which the page is a single tile.
+    Page {
+        spec: PageSpec,
+        strokes: Vec<Arc<Stroke>>,
+    },
+}
+
+impl JobSource {
+    /// The PDF asset the job reads, if any.
+    fn asset(&self) -> Option<AssetId> {
+        match self {
+            JobSource::Pdf { asset, .. } => Some(*asset),
+            JobSource::Page { spec, .. } => match spec.background {
+                Background::Pdf { asset, .. } => Some(asset),
+                Background::None => None,
+            },
+            JobSource::Ink(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -163,14 +183,12 @@ fn run(shared: &Shared, results: &async_channel::Sender<TileResult>) {
             let batch = take_batch(&mut st.queue);
             st.in_flight.extend(batch.iter().map(|j| j.key));
             let first = &batch[0];
-            let asset = match &first.source {
-                JobSource::Pdf { asset, .. } => st
-                    .docs
+            let asset = first.source.asset().and_then(|asset| {
+                st.docs
                     .get(&first.key.doc)
-                    .and_then(|assets| assets.get(asset))
-                    .cloned(),
-                JobSource::Ink(_) => None,
-            };
+                    .and_then(|assets| assets.get(&asset))
+                    .cloned()
+            });
             (batch, asset)
         };
 
@@ -195,10 +213,11 @@ fn run(shared: &Shared, results: &async_channel::Sender<TileResult>) {
 }
 
 /// The first job plus, for PDF tiles, queued jobs for the same page and scale while their
-/// bounding box stays within `MAX_BATCH_AREA`. Ink tiles are cheap and go one at a time.
+/// bounding box stays within `MAX_BATCH_AREA`. Ink tiles are cheap and go one at a time, as
+/// do whole pages.
 fn take_batch(queue: &mut VecDeque<TileJob>) -> Vec<TileJob> {
     let first = queue.pop_front().expect("queue is not empty");
-    if matches!(first.source, JobSource::Ink(_)) {
+    if !matches!(first.source, JobSource::Pdf { .. }) {
         return vec![first];
     }
     let grid = Grid::new(first.page_size, first.key.scale);
@@ -241,27 +260,36 @@ fn render_batch(
         .reduce(PixelRect::union)
         .expect("batch is not empty");
 
+    let mut pdf_page = |id: AssetId, page: u32| -> Result<poppler::Page, String> {
+        let pdf = match pdfs.entry((first.key.doc, id)) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                let bytes = asset.clone().ok_or("the note's PDF is not open")?;
+                let doc = poppler::Document::from_bytes(&glib::Bytes::from_owned(bytes), None)
+                    .map_err(|e| e.to_string())?;
+                e.insert(doc)
+            }
+        };
+        pdf.page(page as i32)
+            .ok_or_else(|| format!("PDF has no page {}", page + 1))
+    };
     let surface = match &first.source {
         JobSource::Pdf {
             asset: id,
             page,
             fill,
-        } => (|| {
-            let pdf = match pdfs.entry((first.key.doc, *id)) {
-                Entry::Occupied(e) => e.into_mut(),
-                Entry::Vacant(e) => {
-                    let bytes = asset.ok_or("the note's PDF is not open")?;
-                    let doc = poppler::Document::from_bytes(&glib::Bytes::from_owned(bytes), None)
-                        .map_err(|e| e.to_string())?;
-                    e.insert(doc)
-                }
-            };
-            let page = pdf
-                .page(*page as i32)
-                .ok_or_else(|| format!("PDF has no page {}", page + 1))?;
-            render_page(&page, first, *fill, bbox).map_err(|e| e.to_string())
-        })(),
+        } => pdf_page(*id, *page)
+            .and_then(|page| render_page(&page, first, *fill, bbox).map_err(|e| e.to_string())),
         JobSource::Ink(strokes) => render_ink(strokes, first, bbox).map_err(|e| e.to_string()),
+        JobSource::Page { spec, strokes } => {
+            let background = match spec.background {
+                Background::Pdf { asset, page } => pdf_page(asset, page).map(Some),
+                Background::None => Ok(None),
+            };
+            background.and_then(|pdf| {
+                render_whole(spec, pdf.as_ref(), strokes, first, bbox).map_err(|e| e.to_string())
+            })
+        }
     };
 
     let surface = match surface {
@@ -351,6 +379,26 @@ fn render_page(
     let scale = job.key.scale.get();
     cr.scale(scale, scale);
     page.render(&cr);
+    cr.status()?;
+    drop(cr);
+    surface.flush();
+    Ok(surface)
+}
+
+fn render_whole(
+    spec: &PageSpec,
+    pdf: Option<&poppler::Page>,
+    strokes: &[Arc<Stroke>],
+    job: &TileJob,
+    bbox: PixelRect,
+) -> Result<cairo::ImageSurface, cairo::Error> {
+    let surface =
+        cairo::ImageSurface::create(cairo::Format::ARgb32, bbox.width as i32, bbox.height as i32)?;
+    let cr = cairo::Context::new(&surface)?;
+    cr.translate(-f64::from(bbox.x), -f64::from(bbox.y));
+    let scale = job.key.scale.get();
+    cr.scale(scale, scale);
+    crate::page::draw_page(&cr, spec, pdf, strokes, false);
     cr.status()?;
     drop(cr);
     surface.flush();
@@ -508,5 +556,54 @@ mod tests {
         let alpha = |x: usize, y: usize| p.bytes[y * p.stride + x * 4 + 3];
         assert_eq!(alpha(100, 20), 255, "on the line (page y 10 → px 20)");
         assert_eq!(alpha(100, 100), 0, "transparent elsewhere");
+    }
+
+    #[test]
+    fn renders_whole_pages_with_paper_and_ink() {
+        use cera_core::{Paper, PaperKind, Point, Tool};
+        let (tx, rx) = async_channel::unbounded();
+        let renderer = Renderer::new(1, tx);
+        renderer.open_doc(1, []);
+        let spec = PageSpec::new(
+            (200.0, 100.0),
+            Paper {
+                kind: PaperKind::Ruled,
+                spacing: 20.0,
+                line: Rgba8::new(0, 0, 255, 255),
+                fill: Rgba8::WHITE,
+            },
+        );
+        let line = [(10.0, 50.0), (100.0, 50.0)].map(|(x, y)| Point {
+            x,
+            y,
+            pressure: 1.0,
+        });
+        let stroke = Arc::new(Stroke::new(Tool::Pen, Rgba8::BLACK, 4.0, line));
+        let mut page_job = job(0, 0, 0, 1.0);
+        page_job.key.layer = Layer::Page;
+        page_job.page_size = (200.0, 100.0);
+        page_job.source = JobSource::Page {
+            spec,
+            strokes: vec![stroke],
+        };
+        renderer.set_jobs(1, vec![page_job]);
+        let p = rx.recv_blocking().unwrap().pixels.unwrap();
+        assert_eq!(
+            (p.width, p.height),
+            (200, 100),
+            "one tile for the whole page"
+        );
+        // B, G, R, A on little-endian.
+        let px = |x: usize, y: usize| {
+            let i = y * p.stride + x * 4;
+            [p.bytes[i + 2], p.bytes[i + 1], p.bytes[i], p.bytes[i + 3]]
+        };
+        assert_eq!(px(150, 30), [255, 255, 255, 255], "paper");
+        assert_eq!(px(50, 50), [0, 0, 0, 255], "ink");
+        assert_eq!(
+            px(150, 39)[2],
+            255,
+            "a blue rule at the end of the second line"
+        );
     }
 }

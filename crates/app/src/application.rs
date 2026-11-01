@@ -89,6 +89,7 @@ impl CeraApplication {
             // gdbus call --session --dest io.github.troikoss.Cera \
             //   --object-path /io/github/troikoss/Cera --method org.gtk.Actions.Activate \
             //   win '[<("new-folder", <"">)>]' '{}'
+            // D-Bus has no empty value, so a boolean stands for "no parameter".
             let win = gio::ActionEntry::builder("win")
                 .parameter_type(Some(glib::VariantTy::new("(sv)").expect("valid type")))
                 .activate(|app: &Self, _, param| {
@@ -97,7 +98,7 @@ impl CeraApplication {
                     else {
                         return;
                     };
-                    let unit = value.type_() == glib::VariantTy::UNIT;
+                    let unit = value.type_() == glib::VariantTy::BOOLEAN;
                     if let Some(window) = app.active_window() {
                         let _ = WidgetExt::activate_action(
                             &window,
@@ -119,11 +120,10 @@ impl CeraApplication {
         self.set_accels_for_action("win.zoom-in", &["<Control>plus", "<Control>equal"]);
         self.set_accels_for_action("win.zoom-out", &["<Control>minus"]);
         self.set_accels_for_action("win.zoom-fit", &["<Control>0"]);
-        self.set_accels_for_action("win.undo", &["<Control>z"]);
-        self.set_accels_for_action("win.redo", &["<Control><Shift>z", "<Control>y"]);
-        self.set_accels_for_action("win.tool::pen", &["p"]);
-        self.set_accels_for_action("win.tool::highlighter", &["h"]);
-        self.set_accels_for_action("win.tool::eraser", &["e"]);
+        self.set_accels_for_action("win.preferences", &["<Control>comma"]);
+        self.set_accels_for_action("win.shortcuts", &["<Control>question"]);
+        // Tools, undo and the clipboard are in the window's bubble-phase shortcuts, so text
+        // fields keep those keys.
     }
 
     fn show_about(&self) {

@@ -109,6 +109,24 @@ impl Stroke {
     pub fn bounds(&self) -> Rect {
         self.bounds
     }
+
+    /// The same stroke moved by (`dx`, `dy`) points, rounded to file precision.
+    pub fn translated(&self, dx: f32, dy: f32) -> Stroke {
+        let points = self.points.iter().map(|p| Point {
+            x: p.x + dx,
+            y: p.y + dy,
+            pressure: p.pressure,
+        });
+        Stroke::new(self.tool, self.color, self.width, points)
+    }
+
+    /// The same stroke in another colour.
+    pub fn with_color(&self, color: Rgba8) -> Stroke {
+        Stroke {
+            color,
+            ..self.clone()
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -445,5 +463,34 @@ impl Document {
         }
         self.layout_dirty = false;
         self.source = Some(source);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn translate_and_recolour_keep_the_rest() {
+        let points =
+            [(1.0, 2.0, 0.5), (3.0, 5.0, 1.0)].map(|(x, y, pressure)| Point { x, y, pressure });
+        let s = Stroke::new(Tool::Highlighter, Rgba8::BLACK, 4.0, points);
+        let moved = s.translated(10.0, -1.0);
+        assert_eq!(
+            (moved.tool(), moved.color(), moved.width()),
+            (s.tool(), s.color(), s.width())
+        );
+        assert_eq!(
+            moved.points()[1],
+            Point {
+                x: 13.0,
+                y: 4.0,
+                pressure: 1.0
+            }
+        );
+        assert_eq!(moved.bounds(), s.bounds().translated(10.0, -1.0));
+        let red = s.with_color(Rgba8::new(255, 0, 0, 90));
+        assert_eq!(red.points(), s.points());
+        assert_eq!(red.color(), Rgba8::new(255, 0, 0, 90));
     }
 }

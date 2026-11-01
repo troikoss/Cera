@@ -18,6 +18,8 @@ pub type DocId = u32;
 pub enum Layer {
     Pdf,
     Ink,
+    /// A whole page with paper, background and ink, for thumbnails.
+    Page,
 }
 
 /// Device pixels per point. Stored as bits so it can be part of a hashed key; tiles are
