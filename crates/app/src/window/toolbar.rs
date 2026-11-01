@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The floating tool bar (DESIGN.md §9): tools, colour swatches, size slots, the lasso's
-//! actions and "add page". How many swatches and size slots it shows is a preference.
-//! Tapping the active pen again opens its pressure setting, the active lasso its shape
-//! (free loop or rectangle); a long press (or right click) on
-//! a swatch opens the palette and colour wheel for that slot, on a size slot a width slider.
+//! actions and "add page". How many swatches and size slots it shows is a preference; the
+//! eraser has size slots but no swatches. Tapping the active pen again opens its pressure
+//! setting, the active lasso its shape (free loop or rectangle); tapping the selected swatch
+//! again opens the palette and colour wheel for that slot, the selected size slot a slider.
 //! Tool settings and slots are saved in the app settings.
 
 use std::cell::Cell;
@@ -16,7 +16,8 @@ use gtk::{gdk, glib};
 
 use super::{CeraWindow, rgba};
 use crate::canvas::{
-    HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTH_RANGE, PEN_WIDTH_RANGE, ToolKind,
+    ERASER_WIDTH_RANGE, HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTH_RANGE,
+    PEN_WIDTH_RANGE, ToolKind,
 };
 use crate::settings;
 use crate::swatch::Swatch;
@@ -139,12 +140,17 @@ impl CeraWindow {
                     }
                 }
             ));
-            on_hold(
+            on_retap(
                 &button,
                 glib::clone!(
                     #[weak(rename_to = win)]
                     self,
-                    move |b| win.show_palette(slot, b)
+                    move |b| {
+                        // With the lasso a tap recolours the selection instead.
+                        if win.imp().tool_state.tool.get() != ToolKind::Lasso {
+                            win.show_palette(slot, b);
+                        }
+                    }
                 ),
             );
             imp.swatch_box.append(&button);
@@ -163,7 +169,7 @@ impl CeraWindow {
                     }
                 }
             ));
-            on_hold(
+            on_retap(
                 &button,
                 glib::clone!(
                     #[weak(rename_to = win)]
@@ -202,10 +208,11 @@ impl CeraWindow {
         })
     }
 
-    /// The size slots' widths for the current tool, the pen's for tools without a width.
+    /// The size slots' widths for the current tool, the pen's for the lasso.
     fn widths(&self) -> Vec<f32> {
         settings::with(|s| match self.imp().tool_state.tool.get() {
             ToolKind::Highlighter => s.highlighter_widths[..s.size_slots].to_vec(),
+            ToolKind::Eraser => s.eraser_widths[..s.size_slots].to_vec(),
             _ => s.pen_widths[..s.size_slots].to_vec(),
         })
     }
@@ -217,7 +224,8 @@ impl CeraWindow {
         settings::update(|s| match tool {
             ToolKind::Highlighter => s.highlighter_width = width,
             ToolKind::Pen => s.pen_width = width,
-            ToolKind::Eraser | ToolKind::Lasso => {}
+            ToolKind::Eraser => s.eraser_width = width,
+            ToolKind::Lasso => {}
         });
     }
 
@@ -230,36 +238,40 @@ impl CeraWindow {
         let current = imp.tool_state.color();
         let selection = self.canvas().is_some_and(|c| c.has_selection());
         imp.selection_box.set_visible(tool == ToolKind::Lasso);
+        imp.swatch_box.set_visible(tool != ToolKind::Eraser);
         for (i, (button, swatch)) in imp.swatches.borrow().iter().enumerate() {
             swatch.set_color(rgba(palette[i]));
-            button.set_sensitive(match tool {
-                ToolKind::Eraser => false,
-                ToolKind::Lasso => selection,
-                _ => true,
-            });
+            button.set_sensitive(tool != ToolKind::Lasso || selection);
             button.set_tooltip_text(Some(if tool == ToolKind::Lasso {
                 "Recolour the selection"
             } else {
-                "Colour (hold for more)"
+                "Colour (tap again for more)"
             }));
             button.set_active(palette[i] == current);
         }
-        let draws = matches!(tool, ToolKind::Pen | ToolKind::Highlighter);
-        imp.size_separator.set_visible(draws);
-        imp.size_box.set_visible(draws);
+        let sized = tool != ToolKind::Lasso;
+        // Without swatches the separator before them already divides the sizes off.
+        imp.size_separator
+            .set_visible(matches!(tool, ToolKind::Pen | ToolKind::Highlighter));
+        imp.size_box.set_visible(sized);
         let widths = self.widths();
         let width = imp.tool_state.width();
+        let unit = if tool == ToolKind::Eraser { "px" } else { "pt" };
         for (i, (button, dot)) in imp.sizes.borrow().iter().enumerate() {
-            dot.set_color(rgba(current));
+            dot.set_color(dot_color(tool, current));
             dot.set_size(dot_size(tool, widths[i]));
-            button.set_tooltip_text(Some(&format!("{} pt (hold to change)", fmt_pt(widths[i]))));
+            button.set_tooltip_text(Some(&format!(
+                "{} {unit} (tap again to change)",
+                fmt_pt(widths[i])
+            )));
             button.set_active((widths[i] - width).abs() < 1e-3);
         }
     }
 
     /// The size slots' dots take the current colour.
     fn update_size_dots(&self) {
-        let color = rgba(self.imp().tool_state.color());
+        let tools = &self.imp().tool_state;
+        let color = dot_color(tools.tool.get(), tools.color());
         for (_, dot) in self.imp().sizes.borrow().iter() {
             dot.set_color(color);
         }
@@ -380,7 +392,8 @@ impl CeraWindow {
         let (min, max) = match tool {
             ToolKind::Pen => PEN_WIDTH_RANGE,
             ToolKind::Highlighter => HIGHLIGHTER_WIDTH_RANGE,
-            _ => return,
+            ToolKind::Eraser => ERASER_WIDTH_RANGE,
+            ToolKind::Lasso => return,
         };
         let step = if tool == ToolKind::Pen { 0.1 } else { 1.0 };
         let scale = gtk::Scale::with_range(
@@ -396,7 +409,11 @@ impl CeraWindow {
         scale.set_width_request(240);
         scale.set_hexpand(true);
         let content = popover_box(gtk::Orientation::Horizontal);
-        content.append(&gtk::Label::new(Some("Width")));
+        content.append(&gtk::Label::new(Some(if tool == ToolKind::Eraser {
+            "Size"
+        } else {
+            "Width"
+        })));
         content.append(&scale);
         let popover = popup(&content, anchor);
         anchor.set_active(true);
@@ -424,6 +441,7 @@ impl CeraWindow {
                 let Some(w) = width.take() else { return };
                 settings::update(|s| match tool {
                     ToolKind::Highlighter => s.highlighter_widths[slot] = w,
+                    ToolKind::Eraser => s.eraser_widths[slot] = w,
                     _ => s.pen_widths[slot] = w,
                 });
                 if win.imp().tool_state.tool.get() == tool {
@@ -517,37 +535,51 @@ impl CeraWindow {
     }
 }
 
-/// Runs `f` on a long press or a right click.
-fn on_hold(button: &gtk::ToggleButton, f: impl Fn(&gtk::ToggleButton) + Clone + 'static) {
-    let hold = gtk::GestureLongPress::new();
-    let held = f.clone();
-    hold.connect_pressed(glib::clone!(
+/// Runs `f` when the button is tapped while already selected. The capture phase sees the
+/// press before the button handles it; `f` runs after the release, once the tap is done.
+fn on_retap(button: &gtk::ToggleButton, f: impl Fn(&gtk::ToggleButton) + 'static) {
+    let tap = gtk::GestureClick::new();
+    tap.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let was_active = Rc::new(Cell::new(false));
+    tap.connect_pressed(glib::clone!(
         #[weak]
         button,
-        move |g, _, _| {
-            g.set_state(gtk::EventSequenceState::Claimed);
-            held(&button);
-        }
+        #[strong]
+        was_active,
+        move |_, _, _, _| was_active.set(button.is_active())
     ));
-    button.add_controller(hold);
-    let right = gtk::GestureClick::builder()
-        .button(gdk::BUTTON_SECONDARY)
-        .build();
-    right.connect_pressed(glib::clone!(
+    let f = Rc::new(f);
+    tap.connect_released(glib::clone!(
         #[weak]
         button,
-        move |g, _, _, _| {
-            g.set_state(gtk::EventSequenceState::Claimed);
-            f(&button);
+        move |_, _, _, _| {
+            if was_active.take() {
+                let f = f.clone();
+                glib::idle_add_local_once(glib::clone!(
+                    #[weak]
+                    button,
+                    move || f(&button)
+                ));
+            }
         }
     ));
-    button.add_controller(right);
+    button.add_controller(tap);
+}
+
+/// Size dots show the tool's colour; the eraser's are grey.
+fn dot_color(tool: ToolKind, current: Rgba8) -> gdk::RGBA {
+    if tool == ToolKind::Eraser {
+        gdk::RGBA::new(0.55, 0.55, 0.55, 1.0)
+    } else {
+        rgba(current)
+    }
 }
 
 /// A size slot's dot: on a log scale over the tool's range, so fine widths stay apart.
 fn dot_size(tool: ToolKind, width: f32) -> i32 {
     let (min, max) = match tool {
         ToolKind::Highlighter => HIGHLIGHTER_WIDTH_RANGE,
+        ToolKind::Eraser => ERASER_WIDTH_RANGE,
         _ => PEN_WIDTH_RANGE,
     };
     let t = ((width / min).ln() / (max / min).ln()).clamp(0.0, 1.0);

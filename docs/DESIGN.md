@@ -207,7 +207,8 @@ nearest overlapping stroke of the same tool, since highlighters always sit under
 the texture stays as a "ghost" until the tiles have caught up, as wet ink does. The clipboard
 is process-wide, so strokes paste into any open note.
 
-**Eraser:** removes whole strokes whose ink comes within 10 logical px of the eraser (bounds
+**Eraser:** removes whole strokes whose ink comes within the eraser's radius (a size slot,
+10 logical px by default) of the eraser (bounds
 check, then distance to each segment). One drag is one undo step (`History` groups).
 
 **Latency targets:** < 1 ms work per motion event, < 8 ms per frame on the target tablet.
@@ -329,14 +330,15 @@ AdwApplicationWindow
             ├─ GtkScrolledWindow > Canvas
             └─ floating pill (bottom centre):
                AdwToggleGroup [pen | highlighter | eraser | lasso] │ 1–6 colour swatches
-               │ 1–5 size slots (pen, highlighter) │ [cut copy paste arrange delete]
+               │ 1–5 size slots (pen, highlighter, eraser) │ [cut copy paste arrange delete]
                (lasso only) │ [add page]
 ```
 
 - **Tools:** tap the active pen again → pressure toggle; the active lasso → loop or rectangle.
-  Long-press a swatch → palette (`AdwWrapBox`) + an HSV colour wheel drawn from gradient
-  nodes (`wheel.rs`); long-press a size slot → width slider. How many swatches and size slots
-  show is a preference. With the lasso, the swatches recolour the selection and cut, copy,
+  Tap the selected swatch again → palette (`AdwWrapBox`) + an HSV colour wheel drawn from
+  gradient nodes (`wheel.rs`); the selected size slot → width slider. How many swatches and
+  size slots show is a preference. The eraser has size slots (radius in logical px, also used
+  by the stylus's eraser end and barrel) and no swatches. With the lasso, the swatches recolour the selection and cut, copy,
   paste, arrange and delete buttons appear. Tool settings and slots are app settings
   (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.

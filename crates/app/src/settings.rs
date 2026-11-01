@@ -8,7 +8,8 @@ use cera_core::Rgba8;
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::{
-    HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTHS, MAX_COLOR_SLOTS, MAX_SIZE_SLOTS, PEN_COLORS, PEN_WIDTHS,
+    ERASER_WIDTHS, HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTHS, MAX_COLOR_SLOTS, MAX_SIZE_SLOTS,
+    PEN_COLORS, PEN_WIDTHS,
 };
 use crate::vault;
 
@@ -22,11 +23,14 @@ pub struct Settings {
     /// Size slot widths, `MAX_SIZE_SLOTS` of them; the first `size_slots` are shown.
     pub pen_widths: Vec<f32>,
     pub highlighter_widths: Vec<f32>,
+    /// Eraser radii, logical pixels.
+    pub eraser_widths: Vec<f32>,
     pub color_slots: usize,
     pub size_slots: usize,
     /// The current widths.
     pub pen_width: f32,
     pub highlighter_width: f32,
+    pub eraser_width: f32,
     pub pressure: bool,
     /// The lasso tool draws a rectangle.
     pub rect_select: bool,
@@ -45,10 +49,12 @@ impl Default for Settings {
             highlighter_colors: HIGHLIGHTER_COLORS.to_vec(),
             pen_widths: PEN_WIDTHS.to_vec(),
             highlighter_widths: HIGHLIGHTER_WIDTHS.to_vec(),
+            eraser_widths: ERASER_WIDTHS.to_vec(),
             color_slots: 3,
             size_slots: 3,
             pen_width: PEN_WIDTHS[1],
             highlighter_width: HIGHLIGHTER_WIDTHS[1],
+            eraser_width: ERASER_WIDTHS[1],
             pressure: true,
             rect_select: false,
             finger_taps: true,
@@ -70,6 +76,7 @@ impl Settings {
         pad(&mut self.highlighter_colors, &HIGHLIGHTER_COLORS);
         pad(&mut self.pen_widths, &PEN_WIDTHS);
         pad(&mut self.highlighter_widths, &HIGHLIGHTER_WIDTHS);
+        pad(&mut self.eraser_widths, &ERASER_WIDTHS);
         self.color_slots = self.color_slots.clamp(1, MAX_COLOR_SLOTS);
         self.size_slots = self.size_slots.clamp(1, MAX_SIZE_SLOTS);
     }

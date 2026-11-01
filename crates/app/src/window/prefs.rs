@@ -104,7 +104,7 @@ impl CeraWindow {
         let current = settings::get();
         let toolbar = adw::PreferencesGroup::builder()
             .title("Tool Bar")
-            .description("Hold a colour or size in the tool bar to change it")
+            .description("Tap the selected colour or size in the tool bar to change it")
             .build();
         let slots = |title: &str, value: usize, max: usize| {
             adw::SpinRow::builder()

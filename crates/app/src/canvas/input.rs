@@ -16,7 +16,6 @@ use gtk::subclass::prelude::*;
 use gtk::{gdk, glib};
 
 use super::Canvas;
-use super::tiles::ERASER_RADIUS;
 use super::wet::{Pen, WetStroke};
 use crate::note::SharedNote;
 
@@ -26,9 +25,14 @@ pub const MAX_SIZE_SLOTS: usize = 5;
 /// Default full-pressure widths of the size slots, in points; the first three are shown.
 pub const PEN_WIDTHS: [f32; MAX_SIZE_SLOTS] = [0.8, 1.6, 3.2, 5.0, 8.0];
 pub const HIGHLIGHTER_WIDTHS: [f32; MAX_SIZE_SLOTS] = [8.0, 12.0, 20.0, 28.0, 36.0];
-/// What a size slot can be set to, in points.
+/// Default eraser radii of the size slots, in logical pixels (the eraser works on screen,
+/// whatever the zoom).
+pub const ERASER_WIDTHS: [f32; MAX_SIZE_SLOTS] = [5.0, 10.0, 20.0, 32.0, 48.0];
+/// What a size slot can be set to: points for the pen and highlighter, logical pixels of
+/// radius for the eraser.
 pub const PEN_WIDTH_RANGE: (f32, f32) = (0.2, 10.0);
 pub const HIGHLIGHTER_WIDTH_RANGE: (f32, f32) = (2.0, 40.0);
+pub const ERASER_WIDTH_RANGE: (f32, f32) = (3.0, 60.0);
 /// Pressure for devices without one (the mouse), and for the pen with pressure turned off.
 const MOUSE_PRESSURE: f64 = 0.6;
 /// Stroke simplification on pen-up: position (points) and pressure tolerances.
@@ -92,6 +96,8 @@ pub struct Tools {
     pub highlighter_color: Cell<Rgba8>,
     pub pen_width: Cell<f32>,
     pub highlighter_width: Cell<f32>,
+    /// Eraser radius in logical pixels; also used by the stylus's eraser end and barrel.
+    pub eraser_width: Cell<f32>,
     /// The pen's width follows the stylus pressure.
     pub pressure: Cell<bool>,
     /// The lasso selects with a rectangle instead of a free loop.
@@ -106,6 +112,7 @@ impl Default for Tools {
             highlighter_color: Cell::new(HIGHLIGHTER_COLORS[0]),
             pen_width: Cell::new(PEN_WIDTHS[1]),
             highlighter_width: Cell::new(HIGHLIGHTER_WIDTHS[1]),
+            eraser_width: Cell::new(ERASER_WIDTHS[1]),
             pressure: Cell::new(true),
             rect_select: Cell::new(false),
         }
@@ -129,10 +136,11 @@ impl Tools {
         }
     }
 
-    /// Width of the selected drawing tool.
+    /// Width of the selected tool (the pen's for the lasso).
     pub fn width(&self) -> f32 {
         match self.tool.get() {
             ToolKind::Highlighter => self.highlighter_width.get(),
+            ToolKind::Eraser => self.eraser_width.get(),
             _ => self.pen_width.get(),
         }
     }
@@ -141,7 +149,8 @@ impl Tools {
         match self.tool.get() {
             ToolKind::Highlighter => self.highlighter_width.set(width),
             ToolKind::Pen => self.pen_width.set(width),
-            ToolKind::Eraser | ToolKind::Lasso => {}
+            ToolKind::Eraser => self.eraser_width.set(width),
+            ToolKind::Lasso => {}
         }
     }
 }
@@ -530,7 +539,7 @@ impl Canvas {
         let (Some(note), Some(view)) = (imp.note.borrow().clone(), self.view()) else {
             return;
         };
-        let radius = (ERASER_RADIUS / view.zoom) as f32;
+        let radius = (f64::from(self.tools().eraser_width.get()) / view.zoom) as f32;
         let (x, y) = view.to_pt(s.x, s.y);
         let drawn = imp.drawn.borrow();
         let pages: Vec<_> = {

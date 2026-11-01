@@ -20,8 +20,6 @@ use super::{Canvas, PIXEL_FORMAT};
 /// Prefetch around the viewport, in device pixels.
 const PREFETCH_X: f64 = 256.0;
 const PREFETCH_Y: f64 = 512.0;
-/// Eraser outline radius, logical pixels.
-pub(super) const ERASER_RADIUS: f64 = 10.0;
 
 /// The page area (points) covered by tile pixels `r` at `scale`.
 pub(super) fn tile_area(r: PixelRect, scale: Scale) -> Rect {
@@ -315,7 +313,7 @@ impl Canvas {
         self.prune_ghosts(&cache, doc.id, &on_screen);
 
         if let Some((x, y)) = imp.eraser_cursor.get() {
-            let r = ERASER_RADIUS as f32;
+            let r = self.tools().eraser_width.get();
             let bounds = graphene::Rect::new(x as f32 - r, y as f32 - r, 2.0 * r, 2.0 * r);
             let ring = gsk::RoundedRect::from_rect(bounds, r);
             let grey = gdk::RGBA::new(0.3, 0.3, 0.3, 0.8);
