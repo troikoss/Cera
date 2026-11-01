@@ -199,9 +199,11 @@ runs first) then takes every touch, draws with one finger, and pans and zooms wi
 second finger within 250 ms turns a just-started stroke into a pinch.
 
 **Lasso** (`crates/app/src/canvas/lasso.rs`): strokes with more than half of their points
-inside the loop are selected. Selected strokes leave the page's ink tiles and are drawn from
+inside the loop (or, in rectangle mode, the dragged rectangle) are selected. Selected strokes leave the page's ink tiles and are drawn from
 one texture (at most 2048 px, 16 MiB) made when the selection is, so dragging redraws no tile.
-A move or recolour is one `ReplaceStrokes` step; afterwards the strokes rejoin the tiles and
+A move, recolour or reorder (Arrange: forward, backward, front, back; a step passes the
+nearest overlapping stroke of the same tool, since highlighters always sit under pen ink;
+`core::arrange`) is one `ReplaceStrokes` step; afterwards the strokes rejoin the tiles and
 the texture stays as a "ghost" until the tiles have caught up, as wet ink does. The clipboard
 is process-wide, so strokes paste into any open note.
 
@@ -256,7 +258,7 @@ Code: `crates/core/src/format.rs` (layout), `codec.rs` (strokes), `file.rs` (ope
   manifest whose first field is its version. A golden-bytes test pins the manifest encoding.
   Chunks are only reached through the manifest, so unknown kinds are skipped.
 - **Undo** (`crates/core/src/undo.rs`): `History` is the only way to edit ink and pages.
-  Commands: `AddStrokes`, `RemoveStrokes`, `ReplaceStrokes` (lasso move/scale, recolour),
+  Commands: `AddStrokes`, `RemoveStrokes`, `ReplaceStrokes` (lasso move/scale, recolour, reorder),
   `InsertPage`, `RemovePage`, `MovePage`, `SetPageSpec`; capped at 500 steps.
 - **Known risk:** a sync tool that rewrites the file *in place* (rather than replace-by-rename)
   while it's mmap'd can crash the app (SIGBUS). Most sync tools rename. Revisit if it bites.
@@ -326,14 +328,18 @@ AdwApplicationWindow
          └─ AdwTabView → per tab: GtkOverlay
             ├─ GtkScrolledWindow > Canvas
             └─ floating pill (bottom centre):
-               AdwToggleGroup [pen | highlighter | eraser | lasso] │ 3 colour swatches
-               [cut copy paste delete] (lasso only) │ [add page]
+               AdwToggleGroup [pen | highlighter | eraser | lasso] │ 1–6 colour swatches
+               │ 1–5 size slots (pen, highlighter) │ [cut copy paste arrange delete]
+               (lasso only) │ [add page]
 ```
 
-- **Tools:** tap the active tool again → popover with width presets and pressure toggle.
-  Long-press a swatch → palette (`AdwWrapBox`) + `GtkColorDialog`. With the lasso, the
-  swatches recolour the selection and cut, copy, paste and delete buttons appear. Tool
-  settings and palettes are app settings (`~/.config/cera/settings.json`).
+- **Tools:** tap the active pen again → pressure toggle; the active lasso → loop or rectangle.
+  Long-press a swatch → palette (`AdwWrapBox`) + an HSV colour wheel drawn from gradient
+  nodes (`wheel.rs`); long-press a size slot → width slider. How many swatches and size slots
+  show is a preference. With the lasso, the swatches recolour the selection and cut, copy,
+  paste, arrange and delete buttons appear. Tool settings and slots are app settings
+  (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
+  `AdwToggleGroup`, which hides children it doesn't know about when they take focus.
 - **Pages button:** `AdwDialog` (a bottom sheet when narrow) with a `GtkGridView` of page
   thumbnails: move earlier/later, insert blank before/after, delete, change paper. Thumbnails
   are whole-page render jobs (`Layer::Page`) under their own document id, asked for only for

@@ -29,22 +29,23 @@ Every add-on waits on the add-on system.
 
 - [ ] Context menu on the canvas (hold or right-click); home for actions that aren't tools,
       such as linking — D2 (the secondary button pans today; a hold must not fight drawing)
-  - [ ] Layer order for a selection: bring forward, send backward, bring to front, send to
-        back — D1
+  - [x] Layer order for a selection: bring forward, send backward, bring to front, send to
+        back — D1 (for now an Arrange menu in the lasso's tool bar section, Ctrl+] / Ctrl+[)
 - [ ] Text tool — D4 (element model, Pango in the render worker, on-screen keyboard)
 - [ ] Shape tool — D3 if shapes are saved as plain strokes, D4 as editable objects
 - [ ] Add-space tool: insert or remove vertical space, standalone or as a selection mode — D2
       (D3 if ink pushed off the page spills onto the next one)
 - [ ] More selection tools: rectangle select, pen (stroke-touch) select, next to the lasso —
       D1 rectangle, D2 pen
+  - [x] Rectangle select (a lasso mode: tap the active lasso)
 - [ ] Photos: insert images onto a page — D4 (first page element; image asset kind, downscale
       on import)
 
 ### Toolbar and colours
 
-- [ ] Three size slots in the tool bar, each one editable — D1
-- [ ] Colour wheel picker — D1
-- [ ] Number of favourite sizes and colours set in preferences — D1 (with the size slots)
+- [x] Three size slots in the tool bar, each one editable — D1
+- [x] Colour wheel picker — D1
+- [x] Number of favourite sizes and colours set in preferences — D1 (with the size slots)
 
 ### Linking and navigation
 
