@@ -54,16 +54,9 @@
                     </child>
                     <child type="end">
                       <object class="GtkButton">
-                        <property name="icon-name">edit-redo-symbolic</property>
-                        <property name="tooltip-text" translatable="yes">Redo</property>
-                        <property name="action-name">win.redo</property>
-                      </object>
-                    </child>
-                    <child type="end">
-                      <object class="GtkButton">
-                        <property name="icon-name">edit-undo-symbolic</property>
-                        <property name="tooltip-text" translatable="yes">Undo</property>
-                        <property name="action-name">win.undo</property>
+                        <property name="icon-name">cera-page-add-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Add page after this one</property>
+                        <property name="action-name">win.add-page</property>
                       </object>
                     </child>
                   </object>
@@ -256,9 +249,19 @@
                                 </child>
                                 <child>
                                   <object class="GtkButton">
-                                    <property name="icon-name">cera-page-add-symbolic</property>
-                                    <property name="tooltip-text" translatable="yes">Add page after this one</property>
-                                    <property name="action-name">win.add-page</property>
+                                    <property name="icon-name">edit-undo-symbolic</property>
+                                    <property name="tooltip-text" translatable="yes">Undo</property>
+                                    <property name="action-name">win.undo</property>
+                                    <style>
+                                      <class name="flat"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkButton">
+                                    <property name="icon-name">edit-redo-symbolic</property>
+                                    <property name="tooltip-text" translatable="yes">Redo</property>
+                                    <property name="action-name">win.redo</property>
                                     <style>
                                       <class name="flat"/>
                                     </style>
