@@ -288,9 +288,12 @@ Code: `crates/render/src/export.rs`, `page.rs`. The main thread collects every p
   (open tabs, the selected one, last page per note). Paths in them are relative to the root,
   so a vault can move. Files are replaced atomically (write a temp file, rename).
 - Recent vaults: `~/.config/cera/vaults.json` (XDG config, no GSettings schema to install).
-- Sidebar tree, almost no custom code:
-  `gtk::DirectoryList` (monitored) → `FilterListModel` (folders, `*.cera`, `*.pdf`, no dotfiles)
-  → `SortListModel` (folders first, natural sort) → `TreeListModel` → `ListView` + `TreeExpander`.
+- Sidebar tree: a monitored list per folder (`folder.rs`: `gio::ListStore` + `GFileMonitor`)
+  → `FilterListModel` (folders, `*.cera`, `*.pdf`, no dotfiles) → `SortListModel` (folders
+  first, natural sort by the shown name) → `TreeListModel` → `ListView` + `TreeExpander`.
+  Not `GtkDirectoryList`: in GTK 4.22 its event queue stalls for good when a file is gone
+  before its info is read, and every note save that writes a temp file and renames it (a new
+  note, a compaction) does that.
 - File operations: new note, new folder, rename inline, drag-and-drop move (mouse and pen;
   a touch drag scrolls, so long-press → Move To…), delete to the desktop trash
   (`gio::File::trash`). Rows ask the window to act through `win.*` actions with the path as

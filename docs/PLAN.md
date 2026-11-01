@@ -136,8 +136,9 @@ mid-writing and reopen.
 - [x] Open folder / create vault; recent vaults in `~/.config/cera/vaults.json`
 - [x] `.cera/` per-vault folder: `vault.json`, `workspace.json` (JSON rather than TOML: one
       parser for everything)
-- [x] Sidebar tree: `DirectoryList` → `FilterListModel` → `SortListModel` → `TreeListModel` →
-      `ListView` + `TreeExpander`
+- [x] Sidebar tree: monitored folder list (`folder.rs`, not `DirectoryList`, which stops
+      updating after a temp-file save) → `FilterListModel` → `SortListModel` → `TreeListModel`
+      → `ListView` + `TreeExpander`
 - [x] New note (default paper), new folder, inline rename, drag-and-drop move (mouse and pen;
       touch scrolls, so long-press → Move To… instead), delete to trash
 - [x] Import PDF dialog (`AdwDialog`: name, folder, page range, keep original) + drag-and-drop

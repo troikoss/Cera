@@ -4,6 +4,7 @@
 mod application;
 mod canvas;
 mod dialogs;
+mod folder;
 mod note;
 mod palm;
 mod settings;

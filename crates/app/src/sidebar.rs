@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The vault sidebar (DESIGN.md §8): the folder tree, filename search and file actions.
 //!
-//! The tree is GTK's own models: a monitored `DirectoryList` per folder → `FilterListModel`
-//! (folders, notes and PDFs, no dotfiles) → `SortListModel` (folders first, natural order) →
-//! `TreeListModel`. Rows talk to the window through its `win.*` actions with file paths as
+//! The tree is a monitored list per folder (`folder.rs`) → `FilterListModel` (folders, notes
+//! and PDFs, no dotfiles) → `SortListModel` (folders first, natural order) → `TreeListModel`. Rows talk to the window through its `win.*` actions with file paths as
 //! targets, so the sidebar holds no file-handling code of its own.
 
 use std::cell::{Cell, OnceCell, RefCell};
@@ -14,8 +13,6 @@ use adw::subclass::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::vault::{self, Vault};
-
-const ATTRIBUTES: &str = "standard::name,standard::display-name,standard::type";
 
 mod imp {
     use super::*;
@@ -378,8 +375,7 @@ impl Sidebar {
 
 /// One folder's listing: filtered, sorted and kept up to date.
 fn folder_model(folder: &gio::File) -> gio::ListModel {
-    let list = gtk::DirectoryList::new(Some(ATTRIBUTES), Some(folder));
-    list.set_monitored(true);
+    let list = crate::folder::model(folder);
     let filter = gtk::CustomFilter::new(|item| {
         item.downcast_ref::<gio::FileInfo>().is_some_and(|info| {
             vault::is_listed(
@@ -399,13 +395,29 @@ fn folder_model(folder: &gio::File) -> gio::ListModel {
         let dir = |i: &gio::FileInfo| i.file_type() != gio::FileType::Directory;
         dir(a)
             .cmp(&dir(b))
-            .then_with(|| vault::natural_cmp(&a.display_name(), &b.display_name()))
+            .then_with(|| vault::natural_cmp(&shown_name(a), &shown_name(b)))
             .into()
     });
     gtk::SortListModel::new(Some(filtered), Some(sorter)).upcast()
 }
 
-/// `DirectoryList` puts each entry's `GFile` in the info.
+/// The name as the tree shows it, to sort by: notes without `.cera`, so "Untitled" comes
+/// before "Untitled 2".
+fn shown_name(info: &gio::FileInfo) -> String {
+    let name = info.display_name();
+    match name.len().checked_sub(5) {
+        Some(stem)
+            if info.file_type() != gio::FileType::Directory
+                && name.is_char_boundary(stem)
+                && name[stem..].eq_ignore_ascii_case(".cera") =>
+        {
+            name[..stem].to_owned()
+        }
+        _ => name.to_string(),
+    }
+}
+
+/// `folder::model` puts each entry's `GFile` in the info.
 fn info_file(info: &gio::FileInfo) -> Option<gio::File> {
     info.attribute_object("standard::file").and_downcast()
 }
