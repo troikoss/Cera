@@ -3,25 +3,31 @@
 //!
 //! ```text
 //! payload = encoding:u8  page_id:varint  count:varint  stroke{count}
-//! stroke  = tool:u8  r g b a:u8  width:varint  n:varint  point{n}
+//! stroke  = r g b a:u8  layer roundness pattern spacing:u8  width:varint  n:varint  point{n}
 //! point   = zigzag(dx):varint  zigzag(dy):varint  pressure:u8
 //! ```
 //!
 //! Coordinates and widths are in 1/64 pt; the first point's delta is from (0, 0), so it is
 //! absolute. Pressure is in 1/255 steps. Typically 3–5 bytes per point.
+//!
+//! Encoding 1 (before 2026.11) had `tool:u8` (0 pen, 1 highlighter) in place of the colour's
+//! following style bytes, before the colour. A pen reads as a round ink stroke; a highlighter
+//! as a round stroke under the ink at full pressure, since highlighters ignored pressure.
 
 use std::sync::Arc;
 
 use crate::error::{Error, Result, corrupt};
-use crate::model::{PageId, Point, Rgba8, Stroke, Tool};
+use crate::model::{Layer, PageId, Pattern, Point, Rgba8, Stroke, StrokeStyle};
 
-const ENCODING: u8 = 1;
+const ENCODING: u8 = 2;
 const UNITS_PER_PT: f32 = 64.0;
 /// Clamp so every coordinate is exactly representable as f32 (|units| < 2^24), which makes
 /// rounding idempotent. That is ±262 143 pt, far beyond any page.
 const MAX_UNITS: i32 = (1 << 24) - 1;
-/// Smallest possible encoded stroke: tool, colour, width, count, one point.
-const MIN_STROKE_LEN: usize = 1 + 4 + 1 + 1 + 3;
+/// Smallest possible encoded stroke: colour, style, width, count, one point (encoding 1:
+/// tool instead of the style).
+const MIN_STROKE_LEN: usize = 4 + 4 + 1 + 1 + 3;
+const MIN_STROKE_LEN_V1: usize = 1 + 4 + 1 + 1 + 3;
 const MIN_POINT_LEN: usize = 3;
 
 fn to_units(v: f32) -> i32 {
@@ -58,12 +64,23 @@ pub(crate) fn encode_page_ink(page: PageId, strokes: &[Arc<Stroke>], out: &mut V
     put_varint(out, page.into());
     put_varint(out, strokes.len() as u64);
     for stroke in strokes {
-        out.push(match stroke.tool() {
-            Tool::Pen => 0,
-            Tool::Highlighter => 1,
-        });
         let c = stroke.color();
         out.extend_from_slice(&[c.r, c.g, c.b, c.a]);
+        let style = stroke.style();
+        out.extend_from_slice(&[
+            match style.layer {
+                Layer::Under => 0,
+                Layer::Ink => 1,
+                Layer::Over => 2,
+            },
+            style.roundness,
+            match style.pattern {
+                Pattern::Solid => 0,
+                Pattern::Dash => 1,
+                Pattern::Dot => 2,
+            },
+            style.spacing,
+        ]);
         put_varint(out, to_units(stroke.width()) as u64);
         put_varint(out, stroke.points().len() as u64);
         let (mut px, mut py) = (0i64, 0i64);
@@ -77,28 +94,61 @@ pub(crate) fn encode_page_ink(page: PageId, strokes: &[Arc<Stroke>], out: &mut V
     }
 }
 
-/// Decodes a payload written by [`encode_page_ink`]. Never panics on bad input, and never
-/// allocates more than the payload can describe.
+/// Decodes a payload written by [`encode_page_ink`], or by encoding 1. Never panics on bad
+/// input, and never allocates more than the payload can describe.
 pub(crate) fn decode_page_ink(payload: &[u8]) -> Result<(PageId, Vec<Arc<Stroke>>)> {
     let mut r = Reader(payload);
     let encoding = r.u8()?;
-    if encoding != ENCODING {
+    if !(1..=ENCODING).contains(&encoding) {
         return Err(Error::UnsupportedVersion {
             what: "ink encoding",
             found: encoding.into(),
             supported: ENCODING.into(),
         });
     }
+    let v1 = encoding == 1;
     let page = PageId::try_from(r.varint()?).map_err(|_| corrupt("page id"))?;
-    let count = r.count(MIN_STROKE_LEN, "stroke count")?;
+    let min_len = if v1 {
+        MIN_STROKE_LEN_V1
+    } else {
+        MIN_STROKE_LEN
+    };
+    let count = r.count(min_len, "stroke count")?;
     let mut strokes = Vec::with_capacity(count);
     for _ in 0..count {
-        let tool = match r.u8()? {
-            0 => Tool::Pen,
-            1 => Tool::Highlighter,
-            _ => return Err(corrupt("unknown tool")),
+        let (style, color) = if v1 {
+            let style = match r.u8()? {
+                0 => StrokeStyle::PEN,
+                1 => StrokeStyle::HIGHLIGHTER,
+                _ => return Err(corrupt("unknown tool")),
+            };
+            let [cr, cg, cb, ca] = r.array()?;
+            (style, Rgba8::new(cr, cg, cb, ca))
+        } else {
+            let [cr, cg, cb, ca] = r.array()?;
+            let [layer, roundness, pattern, spacing] = r.array()?;
+            let layer = match layer {
+                0 => Layer::Under,
+                1 => Layer::Ink,
+                2 => Layer::Over,
+                _ => return Err(corrupt("unknown layer")),
+            };
+            let pattern = match pattern {
+                0 => Pattern::Solid,
+                1 => Pattern::Dash,
+                2 => Pattern::Dot,
+                _ => return Err(corrupt("unknown pattern")),
+            };
+            let style = StrokeStyle {
+                layer,
+                roundness,
+                pattern,
+                spacing,
+            };
+            (style, Rgba8::new(cr, cg, cb, ca))
         };
-        let [cr, cg, cb, ca] = r.array()?;
+        // Encoding 1 highlighters were drawn at one width whatever the pressure.
+        let full_pressure = v1 && style == StrokeStyle::HIGHLIGHTER;
         let width = i32::try_from(r.varint()?)
             .ok()
             .filter(|w| *w <= MAX_UNITS)
@@ -112,15 +162,16 @@ pub(crate) fn decode_page_ink(payload: &[u8]) -> Result<(PageId, Vec<Arc<Stroke>
         for _ in 0..n {
             x = r.coordinate(x)?;
             y = r.coordinate(y)?;
+            let pressure = from_pressure(r.u8()?);
             points.push(Point {
                 x: from_units(x),
                 y: from_units(y),
-                pressure: from_pressure(r.u8()?),
+                pressure: if full_pressure { 1.0 } else { pressure },
             });
         }
         strokes.push(Arc::new(Stroke::from_rounded(
-            tool,
-            Rgba8::new(cr, cg, cb, ca),
+            style,
+            color,
             from_units(width),
             points.into(),
         )));
@@ -242,7 +293,7 @@ mod tests {
                 pressure: 0.4 + (t / 20.0).sin() * 0.2,
             }
         });
-        let stroke = Arc::new(Stroke::new(Tool::Pen, Rgba8::BLACK, 1.5, points));
+        let stroke = Arc::new(Stroke::new(StrokeStyle::PEN, Rgba8::BLACK, 1.5, points));
         let mut out = Vec::new();
         encode_page_ink(7, &[stroke], &mut out);
         let per_point = out.len() as f32 / 200.0;
@@ -272,10 +323,71 @@ mod tests {
 
     #[test]
     fn rejects_unknown_encoding() {
-        assert!(matches!(
-            decode_page_ink(&[2, 0, 0]),
-            Err(Error::UnsupportedVersion { .. })
-        ));
+        for encoding in [0, 3] {
+            assert!(matches!(
+                decode_page_ink(&[encoding, 0, 0]),
+                Err(Error::UnsupportedVersion { .. })
+            ));
+        }
+    }
+
+    fn two_points() -> [Point; 2] {
+        [(1.0, 2.0, 0.2), (3.5, 2.0, 0.6)].map(|(x, y, pressure)| Point { x, y, pressure })
+    }
+
+    /// Pins encoding 2: a square, dashed highlighter over the ink.
+    #[test]
+    fn golden_v2() {
+        let style = StrokeStyle {
+            layer: Layer::Over,
+            roundness: 0,
+            pattern: Pattern::Dash,
+            spacing: 32,
+        };
+        let stroke = Stroke::new(style, Rgba8::new(10, 20, 30, 90), 2.0, two_points());
+        let mut out = Vec::new();
+        encode_page_ink(5, &[Arc::new(stroke.clone())], &mut out);
+        #[rustfmt::skip]
+        let golden = [
+            2, 5, 1,                // encoding, page, one stroke
+            10, 20, 30, 90,         // colour
+            2, 0, 1, 32,            // over, square, dash, spacing 2 widths
+            128, 1, 2,              // width 2 pt (128 units), two points
+            128, 1, 128, 2, 51,     // (64, 128) units, pressure 0.2
+            192, 2, 0, 153,         // dx +160 units (zig-zag 320), dy 0, pressure 0.6
+        ];
+        assert_eq!(out, golden);
+        assert_eq!(decode_ok(&golden).1, [Arc::new(stroke)]);
+    }
+
+    /// Encoding 1 files keep reading: a pen, and a highlighter that ignored pressure.
+    #[test]
+    fn golden_v1() {
+        #[rustfmt::skip]
+        let v1 = [
+            1, 5, 2,                                    // encoding, page, two strokes
+            0, 30, 30, 30, 255, 128, 1, 2,              // pen, colour, width 2, two points
+            128, 1, 128, 2, 51, 192, 2, 0, 153,
+            1, 246, 211, 45, 90, 128, 6, 2,             // highlighter, width 12, two points
+            128, 1, 128, 2, 51, 192, 2, 0, 153,
+        ];
+        let (page, strokes) = decode_ok(&v1);
+        assert_eq!(page, 5);
+        let pen = Stroke::new(
+            StrokeStyle::PEN,
+            Rgba8::new(30, 30, 30, 255),
+            2.0,
+            two_points(),
+        );
+        let full = two_points().map(|p| Point { pressure: 1.0, ..p });
+        let highlighter = Stroke::new(
+            StrokeStyle::HIGHLIGHTER,
+            Rgba8::new(246, 211, 45, 90),
+            12.0,
+            full,
+        );
+        assert_eq!(strokes, [Arc::new(pen), Arc::new(highlighter)]);
+        assert!(decode_page_ink(&[1, 5, 1, 2, 0, 0, 0, 0, 0, 1, 0, 0, 0]).is_err());
     }
 
     fn point() -> impl Strategy<Value = Point> {
@@ -287,19 +399,24 @@ mod tests {
     }
 
     fn stroke() -> impl Strategy<Value = Arc<Stroke>> {
+        let layer = prop::sample::select(Layer::ALL.to_vec());
+        let pattern = prop::sample::select(vec![Pattern::Solid, Pattern::Dash, Pattern::Dot]);
+        let style = (layer, any::<u8>(), pattern, any::<u8>()).prop_map(
+            |(layer, roundness, pattern, spacing)| StrokeStyle {
+                layer,
+                roundness,
+                pattern,
+                spacing,
+            },
+        );
         (
-            prop::bool::ANY,
+            style,
             any::<[u8; 4]>(),
             0.0f32..40.0,
             prop::collection::vec(point(), 1..80),
         )
-            .prop_map(|(highlighter, [r, g, b, a], width, points)| {
-                let tool = if highlighter {
-                    Tool::Highlighter
-                } else {
-                    Tool::Pen
-                };
-                Arc::new(Stroke::new(tool, Rgba8::new(r, g, b, a), width, points))
+            .prop_map(|(style, [r, g, b, a], width, points)| {
+                Arc::new(Stroke::new(style, Rgba8::new(r, g, b, a), width, points))
             })
     }
 

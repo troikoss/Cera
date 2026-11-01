@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
-use cera_core::{PageId, Point, Rect, Rgba8, Tool};
+use cera_core::{PageId, Point, Rect, Rgba8, StrokeStyle};
 use cera_render::ink;
 use cera_render::tile::{Grid, PixelRect, Scale};
 use gtk::prelude::*;
@@ -28,9 +28,12 @@ struct WetTile {
 /// How the stroke is drawn.
 #[derive(Clone, Copy)]
 pub struct Pen {
-    pub tool: Tool,
+    pub style: StrokeStyle,
     pub color: Rgba8,
     pub width: f32,
+    /// Pressure is off: every sample is at full pressure, so a round stroke is drawn as a line
+    /// as the finished stroke will be (`ink::is_constant`).
+    pub constant: bool,
 }
 
 pub struct WetStroke {
@@ -64,7 +67,15 @@ impl WetStroke {
             return;
         }
         let from = self.points.len().saturating_sub(1);
-        self.points.extend_from_slice(samples);
+        if self.pen.constant {
+            let full = samples.iter().map(|p| Point {
+                pressure: 1.0,
+                ..*p
+            });
+            self.points.extend(full);
+        } else {
+            self.points.extend_from_slice(samples);
+        }
         let Self {
             pen,
             scale,
@@ -74,10 +85,7 @@ impl WetStroke {
             ..
         } = self;
         let s = scale.get();
-        let reach = |p: &Point| match pen.tool {
-            Tool::Pen => ink::pen_radius(pen.width, p.pressure),
-            Tool::Highlighter => f64::from(pen.width) / 2.0,
-        };
+        let reach = |p: &Point| f64::from(ink::reach(pen.style, pen.width, p.pressure));
         // Box of the new shapes in page pixels, with a pixel of margin for antialiasing.
         let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
         for p in &points[from..] {
@@ -187,16 +195,5 @@ fn redraw(
     cr.set_operator(cairo::Operator::Over);
     cr.scale(scale, scale);
     ink::set_color(&cr, pen.color, true);
-    cr.new_path();
-    match pen.tool {
-        Tool::Pen => {
-            ink::add_pen_path(&cr, pen.width, points, Some(area));
-            cr.fill()
-        }
-        Tool::Highlighter => {
-            ink::set_highlighter_line(&cr, pen.width);
-            ink::add_highlighter_path(&cr, pen.width, points, Some(area));
-            cr.stroke()
-        }
-    }
+    ink::paint_shape(&cr, pen.style, pen.constant, pen.width, points, Some(area))
 }

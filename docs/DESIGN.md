@@ -103,7 +103,8 @@ The canvas is a custom widget implementing `GtkScrollable` inside a `GtkScrolled
    Zero textures, effectively free on the GPU.
 2. **PDF background** — tiles rendered by Poppler. Only for PDF pages.
 3. **Ink** — tiles rendered by cairo from the page's strokes, transparent background.
-   Highlighter strokes are drawn first inside each tile so pen ink always sits on top.
+   Each tile draws three passes: highlights under the ink, the ink, highlights set to draw over
+   it (the stroke style's layer). Inside a pass, strokes keep page order.
 4. **Wet ink** — the stroke being drawn right now (see below).
 
 ### Tiles
@@ -164,13 +165,18 @@ Code: `crates/render/src/ink.rs`.
   tangent hull between neighbouring discs, filled once with the winding rule → round caps,
   correct joins, no overlapping-alpha artefacts. Finished strokes skip interior discs where the
   outline turns by less than ~4° (the hulls meet there to within a thousandth of a pixel).
-- Highlighter: constant-width polyline, round joins and caps, ~35 % alpha; drawn before pen ink
-  in every tile.
+- Square and rounded-square nibs (a style's roundness below 1): the nib is aligned to the page
+  axes and sized by pressure like the pen; each segment is the convex hull of its two end nibs
+  (corners as 4-segment arcs), all filled once with the winding rule, so opacity stays flat.
+- A round highlight at full pressure throughout (a highlighter with pressure off): constant-width
+  polyline, round joins and caps. Ink keeps the pen outline at full pressure, which keeps notes
+  from before stroke styles pixel-identical.
 - Tiles draw only the shapes that reach into them.
 - Coordinates are page points (1/72 in), so ink lines up with PDF pages exactly.
 - Benchmarks (`cargo bench -p cera-render`), tablet (desktop): 200-sample stroke 348 µs
   (310), a tile with 500 strokes 52 ms (45), one wet-ink event 26 µs (24), finding a tile's
-  strokes on a 3000-stroke page 4.7 µs (3).
+  strokes on a 3000-stroke page 4.7 µs (3). Tablet: a square-nib stroke 122 µs, rounded
+  (roundness 0.5) 467 µs; a tile with 500 square-nib strokes 23 ms.
 
 ## 6. Input
 
@@ -223,7 +229,7 @@ adds or removes pages, the view scrolls with the page in its middle, so a page a
 start doesn't move the view off the ink. Selected strokes leave the page's ink tiles and are drawn from
 one texture (at most 2048 px, 16 MiB) made when the selection is, so dragging redraws no tile.
 A move, recolour or reorder (Arrange: forward, backward, front, back; a step passes the
-nearest overlapping stroke of the same tool, since highlighters always sit under pen ink;
+nearest overlapping stroke in the same layer, since each layer is drawn as a whole;
 `core::arrange`) is one `ReplaceStrokes` step; afterwards the strokes rejoin the tiles and
 the texture stays as a "ghost" until the tiles have caught up, as wet ink does. The clipboard
 is process-wide, so strokes paste into any open note.
@@ -277,8 +283,11 @@ Code: `crates/core/src/format.rs` (layout), `codec.rs` (strokes), `file.rs` (ope
   `{ page id, name }` in page order, the name empty unless given. They belong to the page, so
   they follow it when it moves and come back with it on undo, but toggling one is not itself
   an undo step (like a bookmark in a book); it marks the layout dirty and saves like an edit.
-- **Stroke encoding:** tool, RGBA, base width, point count; points as zig-zag varint deltas in
-  1/64 pt (the first from (0, 0), so absolute); pressure as u8. 3–5 bytes per point on disk.
+- **Stroke encoding** (ink encoding 2): RGBA, style (layer, roundness, pattern, spacing: one
+  byte each), base width, point count; points as zig-zag varint deltas in 1/64 pt (the first
+  from (0, 0), so absolute); pressure as u8. 3–5 bytes per point on disk. Encoding 1 had a tool
+  byte (pen, highlighter) before the colour instead of the style; it is still read, a pen as
+  round ink, a highlighter as a round stroke under the ink at full pressure.
   `Stroke::new` rounds to that precision, so a stroke is identical after save and reopen.
   In memory: `Box<[Point { x: f32, y: f32, pressure: f32 }]>` for the pages that are loaded.
 - **Versioning:** header version, a version byte in each `PageInk` payload, and a postcard

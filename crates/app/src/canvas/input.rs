@@ -9,7 +9,7 @@
 use std::cell::Cell;
 use std::sync::Arc;
 
-use cera_core::{Point, Rect, Rgba8, Stroke, Tool, simplify};
+use cera_core::{Point, Rect, Rgba8, Stroke, StrokeStyle, simplify};
 use cera_render::ink;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
@@ -393,14 +393,16 @@ impl Canvas {
             return;
         }
         let tools = self.tools();
+        let highlighter = tools.tool.get() == ToolKind::Highlighter;
         let pen = Pen {
-            tool: if tools.tool.get() == ToolKind::Highlighter {
-                Tool::Highlighter
+            style: if highlighter {
+                StrokeStyle::HIGHLIGHTER
             } else {
-                Tool::Pen
+                StrokeStyle::PEN
             },
             color: tools.color(),
             width: tools.width(),
+            constant: highlighter,
         };
         let mut wet = WetStroke::new(id, (spec.width, spec.height), pen, self.target_scale());
         wet.extend(&[page_point(s, (x, y), origin)]);
@@ -551,7 +553,7 @@ impl Canvas {
         let mut wet = active.wet;
         let pen = wet.pen;
         let points = simplify(&wet.points, SIMPLIFY_EPS, SIMPLIFY_PRESSURE_EPS);
-        let stroke = Arc::new(Stroke::new(pen.tool, pen.color, pen.width, points));
+        let stroke = Arc::new(Stroke::new(pen.style, pen.color, pen.width, points));
         let area = stroke.bounds();
         let added = {
             let mut note = note.borrow_mut();

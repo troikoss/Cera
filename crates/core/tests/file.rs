@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use cera_core::{
     AssetKind, Document, Error, History, NewAsset, NoteFile, PageId, PageSpec, Paper, PaperKind,
-    Point, Rgba8, Stroke, Tool,
+    Point, Rgba8, Stroke, StrokeStyle,
 };
 
 fn temp(name: &str) -> PathBuf {
@@ -29,9 +29,9 @@ fn stroke(seed: u32, n: usize) -> Arc<Stroke> {
         }
     });
     let tool = if seed.is_multiple_of(3) {
-        Tool::Highlighter
+        StrokeStyle::HIGHLIGHTER
     } else {
-        Tool::Pen
+        StrokeStyle::PEN
     };
     Arc::new(Stroke::new(
         tool,

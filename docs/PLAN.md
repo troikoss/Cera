@@ -29,6 +29,8 @@ on each thumbnail; select all, invert, before, after); checked with mouse input 
 Broadway backend on the desktop. A selected page's context menu acts on all selected pages
 (paper, move, bookmark, delete, each one undo step); checked with injected pointer input in
 the headless compositor.
+M8 (tool presets) in progress: stroke styles, ink encoding 2 and the renderer are done; the
+presets themselves (settings, tool bar, popover, preferences) are next.
 
 ## M0 — Skeleton
 
@@ -208,6 +210,26 @@ as discs and hulls).
 
 **Test on the tablet:** export a written-on PDF note and open it in Papers; export a page as
 PNG; `build-aux/install.sh` and start Cera from the app grid; open a `.cera` from Files.
+
+## M8 — Tool presets
+
+Plan and decisions: [tool-presets.md](tool-presets.md). Eraser modes and dashed and dotted
+lines follow in M9.
+
+- [x] `StrokeStyle` on strokes (layer under / ink / over, nib roundness, pattern, spacing)
+      replaces the pen / highlighter tool; ink encoding 2, encoding 1 still read
+      (golden-bytes tests for both)
+- [x] Three layer passes per tile; square and rounded-square nibs (convex hull per segment,
+      one fill); hit-testing and stroke bounds reach the nib's corners; wet ink matches
+- [x] Benchmarked (tablet): square nib 122 µs per 200-sample stroke, rounded 467 µs, round
+      348 µs; old notes render pixel-identical (`cera-cli png` before and after)
+- [ ] Presets in the settings (settings version 2, migration from the per-tool fields)
+- [ ] Tool bar built from the favourite presets plus the lasso; 1–9 pick favourites, L the lasso
+- [ ] Preset popover on a tap of the active preset (every option, swatches, sizes, "Manage
+      presets…")
+- [ ] Tools page in Preferences: list, favourite, secondary action, edit, duplicate, delete,
+      add, restore defaults
+- [ ] The stylus's eraser end and barrel use the secondary preset (or the lasso)
 
 ## Later
 

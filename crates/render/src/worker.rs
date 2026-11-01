@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn renders_ink_tiles_transparent() {
-        use cera_core::{Point, Tool};
+        use cera_core::{Point, StrokeStyle};
         let (tx, rx) = async_channel::unbounded();
         let renderer = Renderer::new(1, tx);
         renderer.open_doc(1, []);
@@ -545,7 +545,7 @@ mod tests {
             y,
             pressure: 1.0,
         });
-        let stroke = Arc::new(Stroke::new(Tool::Pen, Rgba8::BLACK, 4.0, line));
+        let stroke = Arc::new(Stroke::new(StrokeStyle::PEN, Rgba8::BLACK, 4.0, line));
         let mut ink_job = job(0, 0, 0, 2.0);
         ink_job.key.layer = crate::tile::Layer::Ink;
         ink_job.generation = 7;
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn renders_whole_pages_with_paper_and_ink() {
-        use cera_core::{Paper, PaperKind, Point, Tool};
+        use cera_core::{Paper, PaperKind, Point, StrokeStyle};
         let (tx, rx) = async_channel::unbounded();
         let renderer = Renderer::new(1, tx);
         renderer.open_doc(1, []);
@@ -579,7 +579,7 @@ mod tests {
             y,
             pressure: 1.0,
         });
-        let stroke = Arc::new(Stroke::new(Tool::Pen, Rgba8::BLACK, 4.0, line));
+        let stroke = Arc::new(Stroke::new(StrokeStyle::PEN, Rgba8::BLACK, 4.0, line));
         let mut page_job = job(0, 0, 0, 1.0);
         page_job.key.layer = Layer::Page;
         page_job.page_size = (200.0, 100.0);

@@ -36,10 +36,70 @@ impl Rgba8 {
     }
 }
 
+/// Which pass a stroke is drawn in: highlights under the ink, the ink in page order, then
+/// highlights set to draw over it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Layer {
+    Under,
+    Ink,
+    Over,
+}
+
+impl Layer {
+    /// In drawing order.
+    pub const ALL: [Self; 3] = [Self::Under, Self::Ink, Self::Over];
+}
+
+/// A stroke's line pattern. Dashes and dots are stored but drawn solid until M9.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Tool {
-    Pen,
-    Highlighter,
+pub enum Pattern {
+    Solid,
+    Dash,
+    Dot,
+}
+
+/// How a stroke is drawn, apart from its colour (opacity is the colour's alpha) and width.
+/// Four bytes, so strokes barely grow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StrokeStyle {
+    pub layer: Layer,
+    /// The nib: 0 a square aligned to the page axes, 255 a disc, a rounded square between.
+    pub roundness: u8,
+    pub pattern: Pattern,
+    /// The gap of a dashed or dotted line (and a dash's length) in 1/16 of the width.
+    pub spacing: u8,
+}
+
+impl StrokeStyle {
+    pub const ROUND: u8 = 255;
+    /// A round, solid ink stroke: the pen.
+    pub const PEN: Self = Self {
+        layer: Layer::Ink,
+        roundness: Self::ROUND,
+        pattern: Pattern::Solid,
+        spacing: 16,
+    };
+    /// A round, solid stroke under the ink: the highlighter.
+    pub const HIGHLIGHTER: Self = Self {
+        layer: Layer::Under,
+        ..Self::PEN
+    };
+
+    pub fn is_round(self) -> bool {
+        self.roundness == Self::ROUND
+    }
+
+    /// Roundness as `0.0..=1.0`.
+    pub fn roundness(self) -> f32 {
+        f32::from(self.roundness) / 255.0
+    }
+
+    /// How far the nib reaches from its centre, as a multiple of its radius: 1 for a disc,
+    /// the half-diagonal for a square, in between for a rounded square.
+    pub fn reach_factor(self) -> f32 {
+        let r = self.roundness();
+        r + (1.0 - r) * std::f32::consts::SQRT_2
+    }
 }
 
 /// One input sample: position in page points, pressure in `0.0..=1.0`.
@@ -53,7 +113,7 @@ pub struct Point {
 /// An immutable stroke; shared as `Arc<Stroke>` between pages, undo and render jobs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stroke {
-    tool: Tool,
+    style: StrokeStyle,
     color: Rgba8,
     width: f32,
     points: Box<[Point]>,
@@ -67,21 +127,27 @@ impl Stroke {
     ///
     /// Panics if `points` is empty.
     pub fn new(
-        tool: Tool,
+        style: StrokeStyle,
         color: Rgba8,
         width: f32,
         points: impl IntoIterator<Item = Point>,
     ) -> Self {
         let points: Box<[Point]> = points.into_iter().map(codec::round_point).collect();
         assert!(!points.is_empty(), "a stroke needs at least one point");
-        Self::from_rounded(tool, color, codec::round_width(width), points)
+        Self::from_rounded(style, color, codec::round_width(width), points)
     }
 
     /// For values already at file precision (the decoder).
-    pub(crate) fn from_rounded(tool: Tool, color: Rgba8, width: f32, points: Box<[Point]>) -> Self {
-        let bounds = Rect::around(points.iter().map(|p| (p.x, p.y))).expanded(width / 2.0);
+    pub(crate) fn from_rounded(
+        style: StrokeStyle,
+        color: Rgba8,
+        width: f32,
+        points: Box<[Point]>,
+    ) -> Self {
+        let reach = width / 2.0 * style.reach_factor();
+        let bounds = Rect::around(points.iter().map(|p| (p.x, p.y))).expanded(reach);
         Self {
-            tool,
+            style,
             color,
             width,
             points,
@@ -89,8 +155,8 @@ impl Stroke {
         }
     }
 
-    pub fn tool(&self) -> Tool {
-        self.tool
+    pub fn style(&self) -> StrokeStyle {
+        self.style
     }
 
     pub fn color(&self) -> Rgba8 {
@@ -106,7 +172,7 @@ impl Stroke {
         &self.points
     }
 
-    /// The area the stroke can paint: its points expanded by half the width.
+    /// The area the stroke can paint: its points expanded by the nib's full-pressure reach.
     pub fn bounds(&self) -> Rect {
         self.bounds
     }
@@ -118,7 +184,7 @@ impl Stroke {
             y: p.y + dy,
             pressure: p.pressure,
         });
-        Stroke::new(self.tool, self.color, self.width, points)
+        Stroke::new(self.style, self.color, self.width, points)
     }
 
     /// The same stroke in another colour.
@@ -512,11 +578,11 @@ mod tests {
     fn translate_and_recolour_keep_the_rest() {
         let points =
             [(1.0, 2.0, 0.5), (3.0, 5.0, 1.0)].map(|(x, y, pressure)| Point { x, y, pressure });
-        let s = Stroke::new(Tool::Highlighter, Rgba8::BLACK, 4.0, points);
+        let s = Stroke::new(StrokeStyle::HIGHLIGHTER, Rgba8::BLACK, 4.0, points);
         let moved = s.translated(10.0, -1.0);
         assert_eq!(
-            (moved.tool(), moved.color(), moved.width()),
-            (s.tool(), s.color(), s.width())
+            (moved.style(), moved.color(), moved.width()),
+            (s.style(), s.color(), s.width())
         );
         assert_eq!(
             moved.points()[1],

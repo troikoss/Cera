@@ -5,7 +5,7 @@
 use std::hint::black_box;
 use std::sync::Arc;
 
-use cera_core::{Point, Rect, Rgba8, Stroke, Tool, simplify};
+use cera_core::{Point, Rect, Rgba8, Stroke, StrokeStyle, simplify};
 use cera_render::ink;
 use criterion::{Criterion, criterion_group, criterion_main};
 
@@ -25,15 +25,31 @@ fn samples(seed: u32, n: usize, origin: (f32, f32)) -> Vec<Point> {
         .collect()
 }
 
-/// The stroke as stored: simplified like the canvas does on pen-up.
+/// The stroke as stored: simplified like the canvas does on pen-up. One in ten is a
+/// highlighter, which has pressure off.
 fn wavy(seed: u32, n: usize, origin: (f32, f32)) -> Arc<Stroke> {
-    let points = simplify(&samples(seed, n, origin), 0.05, 0.03);
-    let tool = if seed.is_multiple_of(10) {
-        Tool::Highlighter
+    let style = if seed.is_multiple_of(10) {
+        StrokeStyle::HIGHLIGHTER
     } else {
-        Tool::Pen
+        StrokeStyle::PEN
     };
-    Arc::new(Stroke::new(tool, Rgba8::new(20, 30, 90, 255), 1.6, points))
+    styled(seed, n, origin, style)
+}
+
+fn styled(seed: u32, n: usize, origin: (f32, f32), style: StrokeStyle) -> Arc<Stroke> {
+    let mut raw = samples(seed, n, origin);
+    if style == StrokeStyle::HIGHLIGHTER {
+        raw.iter_mut().for_each(|p| p.pressure = 1.0);
+    }
+    let points = simplify(&raw, 0.05, 0.03);
+    Arc::new(Stroke::new(style, Rgba8::new(20, 30, 90, 255), 1.6, points))
+}
+
+fn nib(roundness: u8) -> StrokeStyle {
+    StrokeStyle {
+        roundness,
+        ..StrokeStyle::PEN
+    }
 }
 
 fn tile_surface() -> (cairo::ImageSurface, cairo::Context) {
@@ -50,6 +66,12 @@ fn pen_stroke(c: &mut Criterion) {
     c.bench_function("pen stroke, 200 samples, drawn", |b| {
         b.iter(|| ink::draw_stroke(&cr, black_box(&stroke), None))
     });
+    for (name, roundness) in [("square", 0), ("rounded", 128)] {
+        let stroke = styled(1, 200, (10.0, 60.0), nib(roundness));
+        c.bench_function(&format!("{name} nib stroke, 200 samples, drawn"), |b| {
+            b.iter(|| ink::draw_stroke(&cr, black_box(&stroke), None))
+        });
+    }
     // Wet ink: one motion event adds 4 samples at the head of a 200-sample stroke.
     let raw = samples(1, 200, (10.0, 60.0));
     let head = &raw[195..];
@@ -96,6 +118,12 @@ fn ink_tile(c: &mut Criterion) {
     let (_surface, cr) = tile_surface();
     c.bench_function("ink tile, 500 strokes", |b| {
         b.iter(|| ink::draw_ink(&cr, black_box(&strokes), None))
+    });
+    let square: Vec<_> = (0..500)
+        .map(|i| styled(i, 60, ((i % 4) as f32 * 25.0, (i / 4 % 120) as f32), nib(0)))
+        .collect();
+    c.bench_function("ink tile, 500 square-nib strokes", |b| {
+        b.iter(|| ink::draw_ink(&cr, black_box(&square), None))
     });
 }
 

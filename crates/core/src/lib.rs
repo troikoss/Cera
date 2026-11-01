@@ -25,8 +25,8 @@ pub use file::{AssetInfo, MappedBytes, NewAsset, NoteFile};
 pub use format::{AssetKind, FORMAT_VERSION};
 pub use geom::{Rect, polygon_contains};
 pub use model::{
-    AssetId, Background, Document, Page, PageId, PageSpec, Paper, PaperKind, Point, Rgba8, Stroke,
-    Tool,
+    AssetId, Background, Document, Layer, Page, PageId, PageSpec, Paper, PaperKind, Pattern, Point,
+    Rgba8, Stroke, StrokeStyle,
 };
 pub use simplify::simplify;
 pub use space::{SPILL_GAP, Side};

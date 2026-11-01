@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cera_core::{
-    Arrange, Background, PageId, PageSpec, Rect, Rgba8, Side, Stroke, Tool, arrange,
+    Arrange, Background, Layer as InkLayer, PageId, PageSpec, Rect, Rgba8, Side, Stroke, arrange,
     polygon_contains,
 };
 use cera_render::ink;
@@ -705,7 +705,7 @@ impl Canvas {
         self.emit_by_name::<()>("changed", &[]);
     }
 
-    /// Recolours the selection. Highlighter strokes keep their translucency.
+    /// Recolours the selection. Each stroke keeps its own opacity.
     pub fn recolour_selection(&self, color: Rgba8) {
         let imp = self.imp();
         let Some(note) = self.note() else { return };
@@ -715,12 +715,9 @@ impl Canvas {
             .strokes
             .iter()
             .map(|st| {
-                let c = match st.tool() {
-                    Tool::Highlighter => Rgba8 {
-                        a: st.color().a,
-                        ..color
-                    },
-                    Tool::Pen => color,
+                let c = Rgba8 {
+                    a: st.color().a,
+                    ..color
                 };
                 Arc::new(st.with_color(c))
             })
@@ -769,12 +766,12 @@ impl Canvas {
                     return;
                 }
             };
-            // Highlighters always sit under pen ink, so only strokes of a selected tool count.
-            let tools: Vec<Tool> = s.strokes.iter().map(|st| st.tool()).collect();
+            // Each layer is drawn as a whole, so only strokes in a selected layer count.
+            let layers: Vec<InkLayer> = s.strokes.iter().map(|st| st.style().layer).collect();
             let Some((order, moved)) = arrange(
                 all.len(),
                 &s.indices,
-                |i| tools.contains(&all[i].tool()) && all[i].bounds().intersects(&s.bounds),
+                |i| layers.contains(&all[i].style().layer) && all[i].bounds().intersects(&s.bounds),
                 how,
             ) else {
                 return;
@@ -801,12 +798,13 @@ impl Canvas {
         self.emit_by_name::<()>("changed", &[]);
     }
 
-    /// The selection's colour (its first stroke's) and whether it is all highlighter ink.
+    /// The selection's colour (its first stroke's) and whether it is all highlights (strokes
+    /// under or over the ink).
     pub fn selection_style(&self) -> Option<(Rgba8, bool)> {
         let sel = self.imp().selection.borrow();
         let s = sel.as_ref()?;
         let first = s.strokes.first()?;
-        let highlighter = s.strokes.iter().all(|st| st.tool() == Tool::Highlighter);
+        let highlighter = s.strokes.iter().all(|st| st.style().layer != InkLayer::Ink);
         Some((first.color(), highlighter))
     }
 

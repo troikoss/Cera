@@ -218,7 +218,7 @@ fn top(strokes: &[Arc<Stroke>]) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Paper, Point, Rgba8, Tool};
+    use crate::model::{Paper, Point, Rgba8, StrokeStyle};
 
     const GAP: f32 = 10.0;
 
@@ -229,12 +229,12 @@ mod tests {
             y,
             pressure: 0.5,
         });
-        Arc::new(Stroke::new(Tool::Pen, Rgba8::BLACK, 1.0, points))
+        Arc::new(Stroke::new(StrokeStyle::PEN, Rgba8::BLACK, 1.0, points))
     }
 
     fn vertical(y0: f32, y1: f32) -> Arc<Stroke> {
         Arc::new(Stroke::new(
-            Tool::Pen,
+            StrokeStyle::PEN,
             Rgba8::BLACK,
             1.0,
             [y0, y1].map(|y| Point {

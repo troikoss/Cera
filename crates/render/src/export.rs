@@ -193,7 +193,7 @@ fn finish(result: Result<(), ExportError>, tmp: &Path, out: &Path) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cera_core::{Paper, PaperKind, Point, Rgba8, Tool};
+    use cera_core::{Paper, PaperKind, Point, Rgba8, StrokeStyle};
 
     fn page(width: f32) -> ExportPage {
         let line = [(10.0, 10.0), (90.0, 40.0)].map(|(x, y)| Point {
@@ -211,7 +211,12 @@ mod tests {
                     fill: Rgba8::WHITE,
                 },
             ),
-            strokes: vec![Arc::new(Stroke::new(Tool::Pen, Rgba8::BLACK, 2.0, line))],
+            strokes: vec![Arc::new(Stroke::new(
+                StrokeStyle::PEN,
+                Rgba8::BLACK,
+                2.0,
+                line,
+            ))],
             bookmark: None,
         }
     }

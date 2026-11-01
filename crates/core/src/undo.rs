@@ -445,7 +445,7 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Paper, PaperKind, Point, Rgba8, Tool};
+    use crate::model::{Paper, PaperKind, Point, Rgba8, StrokeStyle};
 
     fn stroke(n: u8) -> Arc<Stroke> {
         let points = (0..3u8).map(|i| Point {
@@ -454,7 +454,7 @@ mod tests {
             pressure: 0.5,
         });
         Arc::new(Stroke::new(
-            Tool::Pen,
+            StrokeStyle::PEN,
             Rgba8::new(n, 0, 0, 255),
             1.0,
             points,

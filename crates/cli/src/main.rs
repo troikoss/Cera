@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use cera_core::{Background, History, NoteFile, PageSpec, Point, Rgba8, Stroke, Tool};
+use cera_core::{Background, History, NoteFile, PageSpec, Point, Rgba8, Stroke, StrokeStyle};
 
 const USAGE: &str = "\
 usage: cera-cli <command> [args]
@@ -175,7 +175,7 @@ fn scribble(path: &Path, per_page: u32) -> Result<()> {
                     }
                 });
                 Arc::new(Stroke::new(
-                    Tool::Pen,
+                    StrokeStyle::PEN,
                     Rgba8::new(20, 40, 120, 255),
                     1.4,
                     points,

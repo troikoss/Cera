@@ -7,12 +7,19 @@
 //! hull between neighbouring discs, filled once (no overlapping alpha, round ends for free).
 //! Finished strokes skip the discs where the stroke barely turns: there the hulls already meet
 //! to within a thousandth of a pixel, and filling hundreds of discs is what costs time.
-//! A highlighter is a constant-width polyline with round joins and caps.
+//! A round highlight (under or over the ink) at full pressure throughout is a constant-width
+//! polyline with round joins and caps instead, as highlighters always were. Ink keeps the pen
+//! outline even at full pressure, so notes from before stroke styles draw the same pixels.
+//! A stroke with a square or rounded-square nib is the union of the convex hulls of each
+//! pair of neighbouring nibs, also filled once.
+//!
+//! Each layer is drawn in turn: highlights under the ink, the ink, highlights over it.
 
-use std::f64::consts::TAU;
+use std::cell::RefCell;
+use std::f64::consts::{FRAC_PI_2, TAU};
 use std::sync::Arc;
 
-use cera_core::{Point, Rect, Rgba8, Stroke, Tool};
+use cera_core::{Layer, Point, Rect, Rgba8, Stroke, StrokeStyle};
 
 /// Radius at zero pressure, as a fraction of the full-pressure radius.
 const MIN_RADIUS: f64 = 0.25;
@@ -194,34 +201,165 @@ pub fn set_color(cr: &cairo::Context, c: Rgba8, opaque: bool) {
     );
 }
 
+/// Corner points per quarter circle of a rounded-square nib (4 segments: under half a pixel
+/// off a 40 px corner).
+const CORNER_POINTS: usize = 5;
+
+/// How far a stroke's ink reaches from a point of it, in points.
+pub fn reach(style: StrokeStyle, width: f32, pressure: f32) -> f32 {
+    pen_radius(width, pressure) as f32 * style.reach_factor()
+}
+
+/// Whether every point is at full pressure: such a round highlight is drawn as a line.
+pub fn is_constant(points: &[Point]) -> bool {
+    points.iter().all(|p| p.pressure >= 1.0)
+}
+
+/// Adds a stroke's shape to the path and paints it with the current source. `constant` says
+/// every point is at full pressure ([`is_constant`]); with `area`, only the shapes that can
+/// paint inside it.
+pub fn paint_shape(
+    cr: &cairo::Context,
+    style: StrokeStyle,
+    constant: bool,
+    width: f32,
+    points: &[Point],
+    area: Option<Rect>,
+) -> Result<(), cairo::Error> {
+    cr.new_path();
+    if style.is_round() && constant && style.layer != Layer::Ink {
+        set_highlighter_line(cr, width);
+        add_highlighter_path(cr, width, points, area);
+        return cr.stroke();
+    }
+    cr.set_fill_rule(cairo::FillRule::Winding);
+    if style.is_round() {
+        add_pen_path(cr, width, points, area);
+    } else {
+        add_nib_path(cr, style.roundness(), width, points, area);
+    }
+    cr.fill()
+}
+
 /// Draws a finished stroke in page points; with `area`, only the parts that paint inside it.
 pub fn draw_stroke(cr: &cairo::Context, stroke: &Stroke, area: Option<Rect>) {
     set_color(cr, stroke.color(), false);
     let points = stroke.points();
-    match stroke.tool() {
-        Tool::Pen => {
-            cr.new_path();
-            cr.set_fill_rule(cairo::FillRule::Winding);
-            add_pen_path(cr, stroke.width(), points, area);
-            let _ = cr.fill();
-        }
-        Tool::Highlighter => {
-            set_highlighter_line(cr, stroke.width());
-            cr.new_path();
-            add_highlighter_path(cr, stroke.width(), points, area);
-            let _ = cr.stroke();
+    let constant = is_constant(points);
+    let _ = paint_shape(cr, stroke.style(), constant, stroke.width(), points, area);
+}
+
+/// Draws strokes layer by layer (under, ink, over), each layer in page order. With `area`
+/// (a tile), each stroke adds only its shapes that reach into it.
+pub fn draw_ink(cr: &cairo::Context, strokes: &[Arc<Stroke>], area: Option<Rect>) {
+    for layer in Layer::ALL {
+        for stroke in strokes.iter().filter(|s| s.style().layer == layer) {
+            draw_stroke(cr, stroke, area);
         }
     }
 }
 
-/// Draws strokes in page order, highlighters first so pen ink always sits on top. With
-/// `area` (a tile), each stroke adds only its shapes that reach into it.
-pub fn draw_ink(cr: &cairo::Context, strokes: &[Arc<Stroke>], area: Option<Rect>) {
-    for tool in [Tool::Highlighter, Tool::Pen] {
-        for stroke in strokes.iter().filter(|s| s.tool() == tool) {
-            draw_stroke(cr, stroke, area);
+/// Adds the outline of a square or rounded-square nib stroke: the convex hull of each pair of
+/// neighbouring nibs (just the nib for a single point). `roundness` is `0.0..1.0`; the nib
+/// is aligned to the page axes and its radius follows the pressure like a pen's.
+pub fn add_nib_path(
+    cr: &cairo::Context,
+    roundness: f32,
+    width: f32,
+    points: &[Point],
+    area: Option<Rect>,
+) {
+    type Points = Vec<(f64, f64)>;
+    // Reused corner and hull buffers: no allocation per segment.
+    thread_local! {
+        static BUF: RefCell<(Points, Points)> = const { RefCell::new((Vec::new(), Vec::new())) };
+    }
+    let radius = |p: Point| pen_radius(width, p.pressure);
+    let touches = |r: Rect| area.is_none_or(|a| a.intersects(&r));
+    let roundness = f64::from(roundness.clamp(0.0, 1.0));
+    BUF.with_borrow_mut(|(corners, hull)| {
+        let nib = |corners: &mut Vec<(f64, f64)>, p: Point| {
+            nib_corners(corners, xy(p), radius(p), roundness);
+        };
+        if let [only] = points {
+            if touches(disc_box(*only, radius(*only))) {
+                corners.clear();
+                nib(corners, *only);
+                add_polygon(cr, corners);
+            }
+            return;
+        }
+        for w in points.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if !touches(disc_box(a, radius(a)).union(disc_box(b, radius(b)))) {
+                continue;
+            }
+            corners.clear();
+            nib(corners, a);
+            nib(corners, b);
+            convex_hull(corners, hull);
+            add_polygon(cr, hull);
+        }
+    });
+}
+
+/// Appends the outline points of a nib at `c` with radius `r` (half its side): a square with
+/// its corners rounded by `roundness * r`.
+fn nib_corners(out: &mut Vec<(f64, f64)>, c: (f64, f64), r: f64, roundness: f64) {
+    let corner = roundness * r;
+    let inner = r - corner;
+    for (i, (sx, sy)) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let (cx, cy) = (c.0 + sx * inner, c.1 + sy * inner);
+        if corner <= 0.0 {
+            out.push((cx, cy));
+            continue;
+        }
+        let start = i as f64 * FRAC_PI_2;
+        for k in 0..CORNER_POINTS {
+            let a = start + FRAC_PI_2 * k as f64 / (CORNER_POINTS - 1) as f64;
+            out.push((cx + corner * a.cos(), cy + corner * a.sin()));
         }
     }
+}
+
+/// Andrew's monotone chain: the convex hull of `points` (sorted in place) into `out`, with a
+/// positive signed area like [`hull`], so overlapping hulls add up under the winding rule.
+fn convex_hull(points: &mut [(f64, f64)], out: &mut Vec<(f64, f64)>) {
+    points.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    out.clear();
+    let cross = |o: (f64, f64), a: (f64, f64), b: (f64, f64)| {
+        (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
+    };
+    for pass in 0..2 {
+        let start = out.len();
+        let add = |p: (f64, f64), out: &mut Vec<(f64, f64)>| {
+            while out.len() >= start + 2 && cross(out[out.len() - 2], out[out.len() - 1], p) <= 0.0
+            {
+                out.pop();
+            }
+            out.push(p);
+        };
+        if pass == 0 {
+            points.iter().for_each(|&p| add(p, out));
+        } else {
+            points.iter().rev().for_each(|&p| add(p, out));
+        }
+        out.pop(); // the next chain starts with it
+    }
+}
+
+fn add_polygon(cr: &cairo::Context, poly: &[(f64, f64)]) {
+    let Some((&first, rest)) = poly.split_first() else {
+        return;
+    };
+    cr.move_to(first.0, first.1);
+    for p in rest {
+        cr.line_to(p.0, p.1);
+    }
+    cr.close_path();
 }
 
 /// Whether a disc of `radius` around `p` (points) touches the stroke's ink.
@@ -235,13 +373,7 @@ pub fn hits(stroke: &Stroke, p: (f32, f32), radius: f32) -> bool {
     if !stroke.bounds().intersects(&probe) {
         return false;
     }
-    let reach = |q: &Point| {
-        radius
-            + match stroke.tool() {
-                Tool::Pen => pen_radius(stroke.width(), q.pressure) as f32,
-                Tool::Highlighter => stroke.width() / 2.0,
-            }
-    };
+    let reach = |q: &Point| radius + reach(stroke.style(), stroke.width(), q.pressure);
     let points = stroke.points();
     if let [only] = points {
         return distance_to_segment(p, *only, *only) <= reach(only);
@@ -262,13 +394,7 @@ pub fn touches_path(stroke: &Stroke, path: &[(f32, f32)], radius: f32) -> bool {
     }
     let b = stroke.bounds();
     let points = stroke.points();
-    let reach = |q: &Point| {
-        radius
-            + match stroke.tool() {
-                Tool::Pen => pen_radius(stroke.width(), q.pressure) as f32,
-                Tool::Highlighter => stroke.width() / 2.0,
-            }
-    };
+    let reach = |q: &Point| radius + reach(stroke.style(), stroke.width(), q.pressure);
     let max_reach = points.iter().map(reach).fold(radius, f32::max);
     path.windows(2).any(|w| {
         let (p, q) = (w[0], w[1]);
@@ -386,7 +512,7 @@ mod tests {
             y,
             pressure: 1.0,
         });
-        let mut s = render(Stroke::new(Tool::Pen, Rgba8::BLACK, 4.0, pts));
+        let mut s = render(Stroke::new(StrokeStyle::PEN, Rgba8::BLACK, 4.0, pts));
         for x in 6..30 {
             assert_eq!(alpha_at(&mut s, x, 20), 255, "hole at x={x}");
         }
@@ -408,7 +534,7 @@ mod tests {
                 }
             })
             .collect();
-        let stroke = Stroke::new(Tool::Pen, Rgba8::BLACK, 3.0, pts);
+        let stroke = Stroke::new(StrokeStyle::PEN, Rgba8::BLACK, 3.0, pts);
         let points = stroke.points();
         let mut finished = render(stroke.clone());
         let mut wet = cairo::ImageSurface::create(cairo::Format::ARgb32, 40, 40).unwrap();
@@ -455,11 +581,11 @@ mod tests {
             y,
             pressure: 1.0,
         });
-        let s = Stroke::new(Tool::Pen, Rgba8::BLACK, 2.0, pts);
+        let s = Stroke::new(StrokeStyle::PEN, Rgba8::BLACK, 2.0, pts);
         assert!(hits(&s, (30.0, 12.5), 2.0), "within radius + half width");
         assert!(!hits(&s, (30.0, 14.0), 2.0));
         assert!(hits(&s, (8.0, 10.0), 1.5), "round end");
-        let dot = Stroke::new(Tool::Highlighter, Rgba8::BLACK, 10.0, [pts[0]]);
+        let dot = Stroke::new(StrokeStyle::HIGHLIGHTER, Rgba8::BLACK, 10.0, [pts[0]]);
         assert!(hits(&dot, (16.0, 10.0), 2.0));
     }
 
@@ -470,7 +596,7 @@ mod tests {
             y,
             pressure: 1.0,
         });
-        let s = Stroke::new(Tool::Pen, Rgba8::BLACK, 1.0, pts);
+        let s = Stroke::new(StrokeStyle::PEN, Rgba8::BLACK, 1.0, pts);
         // Samples far apart on either side of the line: only the segment between them crosses.
         assert!(touches_path(&s, &[(30.0, 0.0), (30.0, 20.0)], 0.5));
         assert!(!touches_path(&s, &[(30.0, 0.0), (30.0, 8.0)], 0.5));
@@ -484,7 +610,7 @@ mod tests {
         );
         assert!(touches_path(&s, &[(20.0, 10.2)], 0.5), "a tap");
         assert!(!touches_path(&s, &[], 0.5));
-        let dot = Stroke::new(Tool::Pen, Rgba8::BLACK, 2.0, [pts[0]]);
+        let dot = Stroke::new(StrokeStyle::PEN, Rgba8::BLACK, 2.0, [pts[0]]);
         assert!(touches_path(&dot, &[(0.0, 10.0), (20.0, 10.0)], 0.5));
     }
 
@@ -493,10 +619,10 @@ mod tests {
         let pts = [(5.0, 20.0), (35.0, 20.0), (5.0, 20.5)].map(|(x, y)| Point {
             x,
             y,
-            pressure: 0.5,
+            pressure: 1.0,
         });
         let mut s = render(Stroke::new(
-            Tool::Highlighter,
+            StrokeStyle::HIGHLIGHTER,
             Rgba8::new(255, 230, 0, 90),
             6.0,
             pts,
@@ -507,5 +633,95 @@ mod tests {
             "one stroke operation, no double alpha where it overlaps itself"
         );
         assert!((85..=95).contains(&a));
+    }
+
+    fn style(layer: Layer, roundness: u8) -> StrokeStyle {
+        StrokeStyle {
+            layer,
+            roundness,
+            ..StrokeStyle::PEN
+        }
+    }
+
+    #[test]
+    fn square_nib_fills_its_corners() {
+        let at = |x, y| Point {
+            x,
+            y,
+            pressure: 1.0,
+        };
+        let square = Stroke::new(style(Layer::Ink, 0), Rgba8::BLACK, 12.0, [at(20.0, 20.0)]);
+        let mut s = render(square.clone());
+        // Corner of the 12 pt square: outside the disc a round nib would draw.
+        assert_eq!(alpha_at(&mut s, 25, 25), 255);
+        assert_eq!(alpha_at(&mut s, 27, 20), 0);
+        let mut round = render(Stroke::new(
+            StrokeStyle::PEN,
+            Rgba8::BLACK,
+            12.0,
+            [at(20.0, 20.0)],
+        ));
+        assert_eq!(alpha_at(&mut round, 25, 25), 0);
+        assert!(hits(&square, (26.0, 26.0), 0.5), "at the corner");
+        assert!(!hits(&square, (27.0, 27.0), 0.5));
+    }
+
+    #[test]
+    fn nib_strokes_are_one_flat_fill() {
+        // A zig-zag whose hulls overlap: translucent, it must not darken where they do.
+        let pts = [(5.0, 10.0), (35.0, 20.0), (5.0, 30.0), (35.0, 22.0)].map(|(x, y)| Point {
+            x,
+            y,
+            pressure: 0.7,
+        });
+        let mut s = render(Stroke::new(
+            style(Layer::Ink, 100),
+            Rgba8::new(0, 0, 0, 128),
+            6.0,
+            pts,
+        ));
+        // (20, 15) is on the first segment only; (33, 20) where it meets the second.
+        let (a, b) = (alpha_at(&mut s, 20, 15), alpha_at(&mut s, 33, 20));
+        assert_eq!(a, b);
+        assert!((120..=136).contains(&a), "{a}");
+    }
+
+    #[test]
+    fn hulls_wind_positively() {
+        let mut corners = Vec::new();
+        nib_corners(&mut corners, (0.0, 0.0), 2.0, 0.5);
+        nib_corners(&mut corners, (7.0, -3.0), 1.0, 0.5);
+        let mut hull = Vec::new();
+        convex_hull(&mut corners, &mut hull);
+        assert!(signed_area(&hull) > 0.0);
+        assert!(hull.len() >= 4 && hull.len() <= corners.len());
+    }
+
+    #[test]
+    fn layers_draw_under_ink_then_over() {
+        let line = |y| {
+            [(5.0, y), (35.0, y)].map(|(x, y)| Point {
+                x,
+                y,
+                pressure: 1.0,
+            })
+        };
+        let red = Rgba8::new(255, 0, 0, 255);
+        let blue = Rgba8::new(0, 0, 255, 255);
+        let pixel = |strokes: &[Arc<Stroke>]| {
+            let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 40, 40).unwrap();
+            let cr = cairo::Context::new(&surface).unwrap();
+            draw_ink(&cr, strokes, None);
+            drop(cr);
+            let stride = surface.stride() as usize;
+            let data = surface.data().unwrap();
+            data[20 * stride + 20 * 4] // blue channel (BGRA)
+        };
+        // Over drawn first in page order, ink after: over still ends on top.
+        let over = Arc::new(Stroke::new(style(Layer::Over, 255), blue, 8.0, line(20.0)));
+        let ink = Arc::new(Stroke::new(style(Layer::Ink, 255), red, 8.0, line(20.0)));
+        assert_eq!(pixel(&[over.clone(), ink.clone()]), 255);
+        let under = Arc::new(Stroke::new(style(Layer::Under, 255), blue, 8.0, line(20.0)));
+        assert_eq!(pixel(&[ink, under]), 0);
     }
 }
