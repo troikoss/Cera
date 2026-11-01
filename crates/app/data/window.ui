@@ -238,6 +238,17 @@
                                     <property name="spacing">6</property>
                                   </object>
                                 </child>
+                                <!-- Size slots, also added in window code. -->
+                                <child>
+                                  <object class="GtkSeparator" id="size_separator">
+                                    <property name="orientation">vertical</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox" id="size_box">
+                                    <property name="spacing">6</property>
+                                  </object>
+                                </child>
                                 <!-- Shown with the lasso. -->
                                 <child>
                                   <object class="GtkBox" id="selection_box">

@@ -12,6 +12,7 @@ mod sidebar;
 mod swatch;
 mod touch;
 mod vault;
+mod wheel;
 mod window;
 
 use std::io::IsTerminal;

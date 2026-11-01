@@ -32,7 +32,8 @@ use gtk::{gdk, gio, glib};
 
 use self::cache::TileCache;
 pub use self::input::{
-    HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTHS, PEN_COLORS, PEN_WIDTHS, ToolKind, Tools,
+    HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTH_RANGE, HIGHLIGHTER_WIDTHS,
+    MAX_COLOR_SLOTS, MAX_SIZE_SLOTS, PEN_COLORS, PEN_WIDTH_RANGE, PEN_WIDTHS, ToolKind, Tools,
 };
 pub use self::lasso::has_clipboard;
 use self::layout::{Layout, View};

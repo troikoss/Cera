@@ -20,25 +20,38 @@ use super::tiles::ERASER_RADIUS;
 use super::wet::{Pen, WetStroke};
 use crate::note::SharedNote;
 
-/// Full-pressure width presets in points: fine, medium, broad.
-pub const PEN_WIDTHS: [f32; 3] = [0.8, 1.6, 3.2];
-pub const HIGHLIGHTER_WIDTHS: [f32; 3] = [8.0, 12.0, 20.0];
+/// Most colour swatches and size slots the tool bar shows (a preference, 3 by default).
+pub const MAX_COLOR_SLOTS: usize = 6;
+pub const MAX_SIZE_SLOTS: usize = 5;
+/// Default full-pressure widths of the size slots, in points; the first three are shown.
+pub const PEN_WIDTHS: [f32; MAX_SIZE_SLOTS] = [0.8, 1.6, 3.2, 5.0, 8.0];
+pub const HIGHLIGHTER_WIDTHS: [f32; MAX_SIZE_SLOTS] = [8.0, 12.0, 20.0, 28.0, 36.0];
+/// What a size slot can be set to, in points.
+pub const PEN_WIDTH_RANGE: (f32, f32) = (0.2, 10.0);
+pub const HIGHLIGHTER_WIDTH_RANGE: (f32, f32) = (2.0, 40.0);
 /// Pressure for devices without one (the mouse), and for the pen with pressure turned off.
 const MOUSE_PRESSURE: f64 = 0.6;
 /// Stroke simplification on pen-up: position (points) and pressure tolerances.
 const SIMPLIFY_EPS: f32 = 0.05;
 const SIMPLIFY_PRESSURE_EPS: f32 = 0.03;
 
-/// Swatch colours; highlighters are translucent.
-pub const PEN_COLORS: [Rgba8; 3] = [
+/// Default swatch colours; highlighters are translucent.
+pub const PEN_COLORS: [Rgba8; MAX_COLOR_SLOTS] = [
     Rgba8::new(30, 30, 30, 255),
     Rgba8::new(28, 113, 216, 255),
     Rgba8::new(192, 28, 40, 255),
+    Rgba8::new(38, 162, 105, 255),
+    Rgba8::new(230, 97, 0, 255),
+    Rgba8::new(129, 61, 156, 255),
 ];
-pub const HIGHLIGHTER_COLORS: [Rgba8; 3] = [
-    Rgba8::new(246, 211, 45, 90),
-    Rgba8::new(87, 227, 137, 90),
-    Rgba8::new(246, 97, 81, 90),
+pub const HIGHLIGHTER_ALPHA: u8 = 90;
+pub const HIGHLIGHTER_COLORS: [Rgba8; MAX_COLOR_SLOTS] = [
+    Rgba8::new(246, 211, 45, HIGHLIGHTER_ALPHA),
+    Rgba8::new(87, 227, 137, HIGHLIGHTER_ALPHA),
+    Rgba8::new(246, 97, 81, HIGHLIGHTER_ALPHA),
+    Rgba8::new(98, 160, 234, HIGHLIGHTER_ALPHA),
+    Rgba8::new(220, 138, 221, HIGHLIGHTER_ALPHA),
+    Rgba8::new(255, 163, 72, HIGHLIGHTER_ALPHA),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

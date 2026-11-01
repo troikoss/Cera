@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Preferences (paper for new notes in this vault, touch gestures, tile cache) and the
-//! keyboard shortcuts list.
+//! Preferences (paper for new notes in this vault, the tool bar's slots, touch gestures, tile
+//! cache) and the keyboard shortcuts list.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use cera_core::PaperKind;
-use gtk::glib;
+use gtk::{gio, glib};
 
 use super::CeraWindow;
+use crate::canvas::{MAX_COLOR_SLOTS, MAX_SIZE_SLOTS};
 use crate::settings;
 use crate::vault::{PageSize, VaultConfig};
 
@@ -101,6 +102,39 @@ impl CeraWindow {
         }
 
         let current = settings::get();
+        let toolbar = adw::PreferencesGroup::builder()
+            .title("Tool Bar")
+            .description("Hold a colour or size in the tool bar to change it")
+            .build();
+        let slots = |title: &str, value: usize, max: usize| {
+            adw::SpinRow::builder()
+                .title(title)
+                .adjustment(&gtk::Adjustment::new(
+                    value as f64,
+                    1.0,
+                    max as f64,
+                    1.0,
+                    1.0,
+                    0.0,
+                ))
+                .build()
+        };
+        let colors = slots("Colours", current.color_slots, MAX_COLOR_SLOTS);
+        colors.connect_value_notify(|row| {
+            let n = row.value() as usize;
+            settings::update(|s| s.color_slots = n);
+            rebuild_toolbars();
+        });
+        let sizes = slots("Sizes", current.size_slots, MAX_SIZE_SLOTS);
+        sizes.connect_value_notify(|row| {
+            let n = row.value() as usize;
+            settings::update(|s| s.size_slots = n);
+            rebuild_toolbars();
+        });
+        toolbar.add(&colors);
+        toolbar.add(&sizes);
+        page.add(&toolbar);
+
         let touch = adw::PreferencesGroup::builder().title("Touch").build();
         let taps = adw::SwitchRow::builder()
             .title("Undo with two fingers")
@@ -248,5 +282,17 @@ impl CeraWindow {
             .child(&view)
             .build();
         dialog.present(Some(self));
+    }
+}
+
+/// Every window's tool bar, after the number of slots changed.
+fn rebuild_toolbars() {
+    let Some(app) = gio::Application::default().and_downcast::<gtk::Application>() else {
+        return;
+    };
+    for win in app.windows() {
+        if let Ok(win) = win.downcast::<CeraWindow>() {
+            win.rebuild_slots();
+        }
     }
 }

@@ -2,7 +2,7 @@
 //! The main window: vault sidebar, one tab per open note, and the floating tool bar.
 //!
 //! - `mod.rs`: widgets, actions and keyboard shortcuts.
-//! - `toolbar.rs`: the floating tool bar, its width and palette popovers.
+//! - `toolbar.rs`: the floating tool bar: colour and size slots and their popovers.
 //! - `tabs.rs`: notes in tabs: opening, autosave, closing, restoring the workspace.
 //! - `files.rs`: the vault: opening one; creating, renaming, moving, trashing and importing.
 //! - `pages.rs`: the page sorter.
@@ -66,9 +66,14 @@ mod imp {
         #[template_child]
         pub swatch_box: TemplateChild<gtk::Box>,
         #[template_child]
+        pub size_separator: TemplateChild<gtk::Separator>,
+        #[template_child]
+        pub size_box: TemplateChild<gtk::Box>,
+        #[template_child]
         pub selection_box: TemplateChild<gtk::Box>,
         pub(super) tool_state: Rc<Tools>,
         pub(super) swatches: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
+        pub(super) sizes: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
         pub(super) renderer: OnceCell<Rc<Renderer>>,
         pub(super) sinks: RefCell<HashMap<DocId, Sink>>,
         pub(super) next_doc: Cell<DocId>,

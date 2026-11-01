@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The floating tool bar (DESIGN.md §9): tools, three colour swatches, the lasso's actions
-//! and "add page". Tapping the active pen or highlighter again opens its width and pressure
-//! settings; a long press (or right click) on a swatch opens the palette for that slot.
-//! Tool settings and palettes are saved in the app settings.
+//! The floating tool bar (DESIGN.md §9): tools, colour swatches, size slots, the lasso's
+//! actions and "add page". How many swatches and size slots it shows is a preference.
+//! Tapping the active pen again opens its pressure setting; a long press (or right click) on
+//! a swatch opens the palette and colour wheel for that slot, on a size slot a width slider.
+//! Tool settings and slots are saved in the app settings.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -10,9 +14,12 @@ use cera_core::Rgba8;
 use gtk::{gdk, glib};
 
 use super::{CeraWindow, rgba};
-use crate::canvas::{HIGHLIGHTER_WIDTHS, PEN_WIDTHS, ToolKind};
+use crate::canvas::{
+    HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTH_RANGE, PEN_WIDTH_RANGE, ToolKind,
+};
 use crate::settings;
 use crate::swatch::Swatch;
+use crate::wheel::ColorWheel;
 
 /// Palette choices: GNOME's palette for the pen, translucent tints for the highlighter.
 const PEN_PRESETS: [Rgba8; 12] = [
@@ -29,18 +36,8 @@ const PEN_PRESETS: [Rgba8; 12] = [
     Rgba8::new(129, 61, 156, 255),
     Rgba8::new(134, 94, 60, 255),
 ];
-const HIGHLIGHTER_ALPHA: u8 = 90;
-const HIGHLIGHTER_PRESETS: [Rgba8; 6] = [
-    Rgba8::new(246, 211, 45, HIGHLIGHTER_ALPHA),
-    Rgba8::new(87, 227, 137, HIGHLIGHTER_ALPHA),
-    Rgba8::new(246, 97, 81, HIGHLIGHTER_ALPHA),
-    Rgba8::new(98, 160, 234, HIGHLIGHTER_ALPHA),
-    Rgba8::new(220, 138, 221, HIGHLIGHTER_ALPHA),
-    Rgba8::new(255, 163, 72, HIGHLIGHTER_ALPHA),
-];
-/// Dot sizes for the fine, medium and broad width buttons.
-const WIDTH_DOTS: [i32; 3] = [6, 11, 18];
-const WIDTH_NAMES: [&str; 3] = ["Fine", "Medium", "Broad"];
+/// Smallest and largest dot of a size slot, logical px.
+const DOT_RANGE: (f32, f32) = (5.0, 22.0);
 
 impl CeraWindow {
     pub(super) fn setup_toolbar(&self) {
@@ -75,7 +72,7 @@ impl CeraWindow {
         // Tapping the active tool again: let the toggle group switch first, then compare.
         let reclick = gtk::GestureClick::new();
         reclick.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let pressed_on = std::rc::Rc::new(std::cell::RefCell::new(None::<glib::GString>));
+        let pressed_on = Rc::new(std::cell::RefCell::new(None::<glib::GString>));
         reclick.connect_pressed(glib::clone!(
             #[weak(rename_to = win)]
             self,
@@ -100,17 +97,22 @@ impl CeraWindow {
             }
         ));
         imp.tools.add_controller(reclick);
+        self.rebuild_slots();
+    }
 
-        let mut first: Option<gtk::ToggleButton> = None;
-        for slot in 0..3 {
-            let swatch = Swatch::new(gdk::RGBA::BLACK);
-            let button = gtk::ToggleButton::builder()
-                .child(&swatch)
-                .css_classes(["flat"])
-                .tooltip_text("Colour (hold for more)")
-                .build();
-            button.set_group(first.as_ref());
-            first.get_or_insert_with(|| button.clone());
+    /// Creates the colour swatches and size slots, as many as the preferences ask for.
+    pub(super) fn rebuild_slots(&self) {
+        let imp = self.imp();
+        let (colors, sizes) = settings::with(|s| (s.color_slots, s.size_slots));
+        for (button, _) in imp.swatches.take().into_iter().chain(imp.sizes.take()) {
+            if let Some(parent) = button.parent().and_downcast::<gtk::Box>() {
+                parent.remove(&button);
+            }
+        }
+        let mut swatches = Vec::with_capacity(colors);
+        let mut group: Option<gtk::ToggleButton> = None;
+        for slot in 0..colors {
+            let (button, swatch) = self.slot_button(&mut group, Swatch::new(gdk::RGBA::BLACK));
             button.connect_toggled(glib::clone!(
                 #[weak(rename_to = win)]
                 self,
@@ -132,47 +134,90 @@ impl CeraWindow {
                     }
                 }
             ));
-            let hold = gtk::GestureLongPress::new();
-            hold.connect_pressed(glib::clone!(
-                #[weak(rename_to = win)]
-                self,
-                #[weak]
-                button,
-                move |g, _, _| {
-                    g.set_state(gtk::EventSequenceState::Claimed);
-                    win.show_palette(slot, &button);
-                }
-            ));
-            button.add_controller(hold);
-            let right = gtk::GestureClick::builder()
-                .button(gdk::BUTTON_SECONDARY)
-                .build();
-            right.connect_pressed(glib::clone!(
-                #[weak(rename_to = win)]
-                self,
-                #[weak]
-                button,
-                move |g, _, _, _| {
-                    g.set_state(gtk::EventSequenceState::Claimed);
-                    win.show_palette(slot, &button);
-                }
-            ));
-            button.add_controller(right);
+            on_hold(
+                &button,
+                glib::clone!(
+                    #[weak(rename_to = win)]
+                    self,
+                    move |b| win.show_palette(slot, b)
+                ),
+            );
             imp.swatch_box.append(&button);
-            imp.swatches.borrow_mut().push((button, swatch));
+            swatches.push((button, swatch));
         }
+        let mut group: Option<gtk::ToggleButton> = None;
+        let mut slots = Vec::with_capacity(sizes);
+        for slot in 0..sizes {
+            let (button, dot) = self.slot_button(&mut group, Swatch::new(gdk::RGBA::BLACK));
+            button.connect_toggled(glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                move |b| {
+                    if b.is_active() {
+                        win.set_width(win.widths()[slot]);
+                    }
+                }
+            ));
+            on_hold(
+                &button,
+                glib::clone!(
+                    #[weak(rename_to = win)]
+                    self,
+                    move |b| win.show_width(slot, b)
+                ),
+            );
+            imp.size_box.append(&button);
+            slots.push((button, dot));
+        }
+        *imp.swatches.borrow_mut() = swatches;
+        *imp.sizes.borrow_mut() = slots;
         self.update_toolbar();
     }
 
+    /// A toggle button for one slot of a tool bar group.
+    fn slot_button(
+        &self,
+        group: &mut Option<gtk::ToggleButton>,
+        dot: Swatch,
+    ) -> (gtk::ToggleButton, Swatch) {
+        let button = gtk::ToggleButton::builder()
+            .child(&dot)
+            .css_classes(["flat"])
+            .build();
+        button.set_group(group.as_ref());
+        group.get_or_insert_with(|| button.clone());
+        (button, dot)
+    }
+
     /// The swatches' colours: the highlighter's for the highlighter, the pen's otherwise.
-    pub(super) fn palette(&self) -> [Rgba8; 3] {
+    pub(super) fn palette(&self) -> Vec<Rgba8> {
         settings::with(|s| match self.imp().tool_state.tool.get() {
-            ToolKind::Highlighter => s.highlighter_colors,
-            _ => s.pen_colors,
+            ToolKind::Highlighter => s.highlighter_colors[..s.color_slots].to_vec(),
+            _ => s.pen_colors[..s.color_slots].to_vec(),
         })
     }
 
-    /// Swatch colours and states, and the lasso's buttons, for the current tool.
+    /// The size slots' widths for the current tool, the pen's for tools without a width.
+    fn widths(&self) -> Vec<f32> {
+        settings::with(|s| match self.imp().tool_state.tool.get() {
+            ToolKind::Highlighter => s.highlighter_widths[..s.size_slots].to_vec(),
+            _ => s.pen_widths[..s.size_slots].to_vec(),
+        })
+    }
+
+    fn set_width(&self, width: f32) {
+        let tools = &self.imp().tool_state;
+        let tool = tools.tool.get();
+        tools.set_width(width);
+        settings::update(|s| match tool {
+            ToolKind::Highlighter => s.highlighter_width = width,
+            ToolKind::Pen => s.pen_width = width,
+            ToolKind::Eraser | ToolKind::Lasso => {}
+        });
+    }
+
+    /// Swatch colours, size dots and their states, and the lasso's buttons, for the current
+    /// tool.
     pub(super) fn update_toolbar(&self) {
         let imp = self.imp();
         let tool = imp.tool_state.tool.get();
@@ -192,85 +237,112 @@ impl CeraWindow {
             } else {
                 "Colour (hold for more)"
             }));
-            if palette[i] == current {
-                button.set_active(true);
-            }
+            button.set_active(palette[i] == current);
+        }
+        let draws = matches!(tool, ToolKind::Pen | ToolKind::Highlighter);
+        imp.size_separator.set_visible(draws);
+        imp.size_box.set_visible(draws);
+        let widths = self.widths();
+        let width = imp.tool_state.width();
+        for (i, (button, dot)) in imp.sizes.borrow().iter().enumerate() {
+            dot.set_color(rgba(current));
+            dot.set_size(dot_size(tool, widths[i]));
+            button.set_tooltip_text(Some(&format!("{} pt (hold to change)", fmt_pt(widths[i]))));
+            button.set_active((widths[i] - width).abs() < 1e-3);
         }
     }
 
-    /// Width presets, and pressure for the pen.
+    /// Pressure for the pen.
     fn show_tool_popover(&self) {
         let imp = self.imp();
         let tools = imp.tool_state.clone();
-        let tool = tools.tool.get();
-        let widths = match tool {
-            ToolKind::Pen => PEN_WIDTHS,
-            ToolKind::Highlighter => HIGHLIGHTER_WIDTHS,
-            _ => return,
-        };
-        let content = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(12)
-            .margin_top(6)
-            .margin_bottom(6)
-            .margin_start(6)
-            .margin_end(6)
+        if tools.tool.get() != ToolKind::Pen {
+            return;
+        }
+        let label = gtk::Label::builder()
+            .label("Pressure")
+            .xalign(0.0)
+            .hexpand(true)
             .build();
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let mut group: Option<gtk::ToggleButton> = None;
-        for (i, width) in widths.into_iter().enumerate() {
-            let dot = Swatch::new(rgba(tools.color()));
-            dot.set_size(WIDTH_DOTS[i]);
-            let button = gtk::ToggleButton::builder()
-                .child(&dot)
-                .css_classes(["flat", "circular"])
-                .tooltip_text(WIDTH_NAMES[i])
-                .width_request(44)
-                .height_request(44)
-                .build();
-            button.set_group(group.as_ref());
-            group.get_or_insert_with(|| button.clone());
-            button.set_active((tools.width() - width).abs() < 1e-3);
-            let tools = tools.clone();
-            button.connect_toggled(move |b| {
-                if b.is_active() {
-                    tools.set_width(width);
-                    settings::update(|s| match tool {
-                        ToolKind::Highlighter => s.highlighter_width = width,
-                        _ => s.pen_width = width,
-                    });
-                }
-            });
-            row.append(&button);
-        }
-        content.append(&row);
-        if tool == ToolKind::Pen {
-            let label = gtk::Label::builder()
-                .label("Pressure")
-                .xalign(0.0)
-                .hexpand(true)
-                .build();
-            let switch = gtk::Switch::builder()
-                .active(tools.pressure.get())
-                .valign(gtk::Align::Center)
-                .build();
-            switch.connect_active_notify(move |s| {
-                tools.pressure.set(s.is_active());
-                settings::update(|st| st.pressure = s.is_active());
-            });
-            let pressure = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            pressure.append(&label);
-            pressure.append(&switch);
-            content.append(&pressure);
-        }
+        let switch = gtk::Switch::builder()
+            .active(tools.pressure.get())
+            .valign(gtk::Align::Center)
+            .build();
+        switch.connect_active_notify(move |s| {
+            tools.pressure.set(s.is_active());
+            settings::update(|st| st.pressure = s.is_active());
+        });
+        let content = popover_box(gtk::Orientation::Horizontal);
+        content.append(&label);
+        content.append(&switch);
         popup(&content, &*imp.tools);
     }
 
-    /// More colours for swatch `slot`, and a custom colour.
+    /// A slider for the width of size slot `slot`; moving it selects the slot.
+    fn show_width(&self, slot: usize, anchor: &gtk::ToggleButton) {
+        let tool = self.imp().tool_state.tool.get();
+        let (min, max) = match tool {
+            ToolKind::Pen => PEN_WIDTH_RANGE,
+            ToolKind::Highlighter => HIGHLIGHTER_WIDTH_RANGE,
+            _ => return,
+        };
+        let step = if tool == ToolKind::Pen { 0.1 } else { 1.0 };
+        let scale = gtk::Scale::with_range(
+            gtk::Orientation::Horizontal,
+            f64::from(min),
+            f64::from(max),
+            step,
+        );
+        scale.set_value(f64::from(self.widths()[slot]));
+        scale.set_digits(if tool == ToolKind::Pen { 1 } else { 0 });
+        scale.set_draw_value(true);
+        scale.set_value_pos(gtk::PositionType::Right);
+        scale.set_width_request(240);
+        scale.set_hexpand(true);
+        let content = popover_box(gtk::Orientation::Horizontal);
+        content.append(&gtk::Label::new(Some("Width")));
+        content.append(&scale);
+        let popover = popup(&content, anchor);
+        anchor.set_active(true);
+        // The settings file is written once, when the popover closes.
+        let width = Rc::new(Cell::new(None::<f32>));
+        scale.connect_value_changed(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            #[strong]
+            width,
+            move |s| {
+                let w = s.value() as f32;
+                width.set(Some(w));
+                let imp = win.imp();
+                imp.tool_state.set_width(w);
+                if let Some((_, dot)) = imp.sizes.borrow().get(slot) {
+                    dot.set_size(dot_size(tool, w));
+                }
+            }
+        ));
+        popover.connect_closed(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            move |_| {
+                let Some(w) = width.take() else { return };
+                settings::update(|s| match tool {
+                    ToolKind::Highlighter => s.highlighter_widths[slot] = w,
+                    _ => s.pen_widths[slot] = w,
+                });
+                if win.imp().tool_state.tool.get() == tool {
+                    win.set_width(w);
+                    win.update_toolbar();
+                }
+            }
+        ));
+    }
+
+    /// More colours for swatch `slot`, and a colour wheel.
     fn show_palette(&self, slot: usize, anchor: &gtk::ToggleButton) {
         let highlighter = self.imp().tool_state.tool.get() == ToolKind::Highlighter;
         let presets: &[Rgba8] = if highlighter {
-            &HIGHLIGHTER_PRESETS
+            &HIGHLIGHTER_COLORS
         } else {
             &PEN_PRESETS
         };
@@ -278,21 +350,12 @@ impl CeraWindow {
             .child_spacing(6)
             .line_spacing(6)
             .natural_line_length(6 * 46)
+            .justify(adw::JustifyMode::Spread)
             .build();
-        let content = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(12)
-            .margin_top(6)
-            .margin_bottom(6)
-            .margin_start(6)
-            .margin_end(6)
-            .build();
+        let content = popover_box(gtk::Orientation::Vertical);
         content.append(&wrap);
-        let custom = gtk::Button::builder()
-            .label("_Custom…")
-            .use_underline(true)
-            .build();
-        content.append(&custom);
+        let wheel = ColorWheel::new(self.palette()[slot]);
+        content.append(&wheel);
         let popover = popup(&content, anchor);
         for &color in presets {
             let button = gtk::Button::builder()
@@ -313,31 +376,27 @@ impl CeraWindow {
             ));
             wrap.append(&button);
         }
-        custom.connect_clicked(glib::clone!(
+        let alpha = if highlighter { HIGHLIGHTER_ALPHA } else { 255 };
+        // While dragging only the swatch follows; the colour is taken when the finger lifts,
+        // so recolouring a selection is one undo step.
+        wheel.connect_changed(glib::clone!(
             #[weak(rename_to = win)]
             self,
-            #[weak]
-            popover,
-            move |_| {
-                popover.popdown();
-                let initial = rgba(win.palette()[slot]);
-                let dialog = gtk::ColorDialog::builder().with_alpha(false).build();
-                glib::spawn_future_local(glib::clone!(
-                    #[weak]
-                    win,
-                    async move {
-                        // An error means the dialog was cancelled.
-                        let Ok(c) = dialog.choose_rgba_future(Some(&win), Some(&initial)).await
-                        else {
-                            return;
-                        };
-                        let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-                        let alpha = if highlighter { HIGHLIGHTER_ALPHA } else { 255 };
-                        let color =
-                            Rgba8::new(byte(c.red()), byte(c.green()), byte(c.blue()), alpha);
-                        win.set_palette_slot(slot, color, highlighter);
-                    }
-                ));
+            move |w| {
+                if let Some((_, swatch)) = win.imp().swatches.borrow().get(slot) {
+                    swatch.set_color(rgba(w.color()));
+                }
+            }
+        ));
+        wheel.connect_picked(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            move |w| {
+                let color = Rgba8 {
+                    a: alpha,
+                    ..w.color()
+                };
+                win.set_palette_slot(slot, color, highlighter);
             }
         ));
     }
@@ -362,6 +421,60 @@ impl CeraWindow {
     }
 }
 
+/// Runs `f` on a long press or a right click.
+fn on_hold(button: &gtk::ToggleButton, f: impl Fn(&gtk::ToggleButton) + Clone + 'static) {
+    let hold = gtk::GestureLongPress::new();
+    let held = f.clone();
+    hold.connect_pressed(glib::clone!(
+        #[weak]
+        button,
+        move |g, _, _| {
+            g.set_state(gtk::EventSequenceState::Claimed);
+            held(&button);
+        }
+    ));
+    button.add_controller(hold);
+    let right = gtk::GestureClick::builder()
+        .button(gdk::BUTTON_SECONDARY)
+        .build();
+    right.connect_pressed(glib::clone!(
+        #[weak]
+        button,
+        move |g, _, _, _| {
+            g.set_state(gtk::EventSequenceState::Claimed);
+            f(&button);
+        }
+    ));
+    button.add_controller(right);
+}
+
+/// A size slot's dot: on a log scale over the tool's range, so fine widths stay apart.
+fn dot_size(tool: ToolKind, width: f32) -> i32 {
+    let (min, max) = match tool {
+        ToolKind::Highlighter => HIGHLIGHTER_WIDTH_RANGE,
+        _ => PEN_WIDTH_RANGE,
+    };
+    let t = ((width / min).ln() / (max / min).ln()).clamp(0.0, 1.0);
+    (DOT_RANGE.0 + t * (DOT_RANGE.1 - DOT_RANGE.0)).round() as i32
+}
+
+/// "1.6", "12": a width without trailing zeros.
+fn fmt_pt(width: f32) -> String {
+    let s = format!("{width:.1}");
+    s.strip_suffix(".0").map_or(s.clone(), str::to_owned)
+}
+
+fn popover_box(orientation: gtk::Orientation) -> gtk::Box {
+    gtk::Box::builder()
+        .orientation(orientation)
+        .spacing(12)
+        .margin_top(6)
+        .margin_bottom(6)
+        .margin_start(6)
+        .margin_end(6)
+        .build()
+}
+
 /// A popover above `anchor`, removed once closed.
 fn popup(content: &impl IsA<gtk::Widget>, anchor: &impl IsA<gtk::Widget>) -> gtk::Popover {
     let popover = gtk::Popover::builder()
@@ -375,4 +488,23 @@ fn popup(content: &impl IsA<gtk::Widget>, anchor: &impl IsA<gtk::Widget>) -> gtk
     });
     popover.popup();
     popover
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dots_grow_with_width() {
+        let pen = [0.2, 0.8, 1.6, 3.2, 10.0].map(|w| dot_size(ToolKind::Pen, w));
+        assert!(pen.windows(2).all(|p| p[0] < p[1]), "{pen:?}");
+        assert_eq!(pen[0], DOT_RANGE.0 as i32);
+        assert_eq!(pen[4], DOT_RANGE.1 as i32);
+    }
+
+    #[test]
+    fn widths_print_short() {
+        assert_eq!(fmt_pt(1.6), "1.6");
+        assert_eq!(fmt_pt(12.0), "12");
+    }
 }
