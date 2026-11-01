@@ -565,7 +565,30 @@ impl Canvas {
             glib::timeout_add_local_once(std::time::Duration::from_millis(1000), move || {
                 canvas.undo();
                 tracing::info!("demo: undid the erase");
+                canvas.demo_scroll();
             });
+        });
+    }
+
+    /// Scrolls down at a steady 4000 px/s for 5 s, one step per frame, to measure frame times
+    /// while tiles stream in (`CERA_DEBUG=1` logs them).
+    fn demo_scroll(&self) {
+        let Some(adj) = self.adjustment(gtk::Orientation::Vertical) else {
+            return;
+        };
+        tracing::info!("demo: scrolling");
+        let start = std::cell::Cell::new(None::<i64>);
+        let from = adj.value();
+        self.add_tick_callback(move |canvas, clock| {
+            let now = clock.frame_time();
+            let t0 = *start.get().get_or_insert(now);
+            let seconds = (now - t0) as f64 / 1e6;
+            adj.set_value(from + seconds * 4000.0);
+            if seconds >= 5.0 || adj.value() >= adj.upper() - adj.page_size() {
+                tracing::info!(page = canvas.current_page() + 1, "demo: done");
+                return glib::ControlFlow::Break;
+            }
+            glib::ControlFlow::Continue
         });
     }
 }

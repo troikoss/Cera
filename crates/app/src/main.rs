@@ -29,7 +29,6 @@ fn main() -> glib::ExitCode {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting");
 
     gio::resources_register_include!("cera.gresource").expect("embedded GResource is valid");
-    gtk::Window::set_default_icon_name(APP_ID);
 
     CeraApplication::new().run()
 }

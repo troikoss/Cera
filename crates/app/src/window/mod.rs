@@ -419,7 +419,9 @@ impl CeraWindow {
                 return glib::ControlFlow::Break;
             };
             if let Some(canvas) = win.canvas() {
-                label.set_text(&canvas.debug_text());
+                let text = canvas.debug_text();
+                tracing::debug!(target: "cera::stats", "{}", text.replace('\n', " · "));
+                label.set_text(&text);
             }
             glib::ControlFlow::Continue
         });

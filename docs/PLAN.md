@@ -37,7 +37,10 @@ Record baseline RSS (`grep -E 'Rss|Pss' /proc/$(pidof cera)/smaps_rollup`).
 - [x] Touch: log touch sequences separately; check the stylus never arrives as touch
 - [x] Draw raw polylines (width from pressure) to eyeball latency
 - [ ] Try `GSK_RENDERER=gl`, `vulkan`, `cairo` and note frame times (GTK 4.18 removed the old GL
-      renderer and renamed `ngl` to `gl`)
+      renderer and renamed `ngl` to `gl`). Memory so far (2026-11-01, 324-page note, scripted
+      demo): Vulkan 165 MiB RSS, GL 275 MiB, cairo 139 MiB. Frame times still need the window
+      in front: `CERA_DEBUG=1 CERA_DEBUG_DEMO=1 GSK_RENDERER=… cera note.cera` now ends with a
+      5 s scroll and logs the overlay's numbers.
 
 Run: `cargo run -p cera --release --example stylus` (flags in the file header). Each pen-up
 logs and shows a stroke summary: rates, backlog, pressure/tilt, handler and paint time,

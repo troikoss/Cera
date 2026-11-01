@@ -24,6 +24,7 @@ mod imp {
     impl ApplicationImpl for CeraApplication {
         fn startup(&self) {
             self.parent_startup();
+            gtk::Window::set_default_icon_name(APP_ID);
             self.obj().setup_actions();
         }
 
