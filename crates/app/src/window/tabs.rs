@@ -349,6 +349,7 @@ impl CeraWindow {
             ("copy", selection),
             ("delete-selection", selection),
             ("select-none", selection),
+            ("arrange", selection),
             ("paste", has_note && crate::canvas::has_clipboard()),
         ] {
             self.set_action_enabled(name, enabled);

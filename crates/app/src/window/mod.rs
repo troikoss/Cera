@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cera_core::Rgba8;
+use cera_core::{Arrange, Rgba8};
 use cera_render::tile::DocId;
 use cera_render::worker::{Renderer, TileResult};
 use gtk::{gdk, gio, glib};
@@ -242,6 +242,21 @@ impl CeraWindow {
                 }
             })
             .build();
+        let arrange = gio::ActionEntry::builder("arrange")
+            .parameter_type(Some(glib::VariantTy::STRING))
+            .activate(|win: &Self, _, param| {
+                let how = match param.and_then(|p| p.get::<String>()).as_deref() {
+                    Some("front") => Arrange::Front,
+                    Some("forward") => Arrange::Forward,
+                    Some("backward") => Arrange::Backward,
+                    Some("back") => Arrange::Back,
+                    _ => return,
+                };
+                if let Some(canvas) = win.canvas() {
+                    canvas.arrange_selection(how);
+                }
+            })
+            .build();
         self.add_action_entries([
             simple("open", Self::open_dialog),
             simple("open-vault", |win| win.open_vault_dialog(false)),
@@ -283,6 +298,7 @@ impl CeraWindow {
             canvas_action("zoom-out", |c| c.zoom_step(-1)),
             canvas_action("zoom-fit", Canvas::zoom_fit_width),
             tool,
+            arrange,
         ]);
         self.update_note_actions();
     }
@@ -293,7 +309,7 @@ impl CeraWindow {
     fn setup_shortcuts(&self) {
         let controller = gtk::ShortcutController::new();
         controller.set_propagation_phase(gtk::PropagationPhase::Bubble);
-        let shortcuts: [(&str, &str, Option<&str>); 13] = [
+        let shortcuts: [(&str, &str, Option<&str>); 17] = [
             ("p", "win.tool", Some("pen")),
             ("h", "win.tool", Some("highlighter")),
             ("e", "win.tool", Some("eraser")),
@@ -305,6 +321,18 @@ impl CeraWindow {
             ("<Control>v", "win.paste", None),
             ("Delete|BackSpace", "win.delete-selection", None),
             ("Escape", "win.select-none", None),
+            ("<Control>bracketright", "win.arrange", Some("forward")),
+            ("<Control>bracketleft", "win.arrange", Some("backward")),
+            (
+                "<Control><Shift>bracketright|<Control>braceright",
+                "win.arrange",
+                Some("front"),
+            ),
+            (
+                "<Control><Shift>bracketleft|<Control>braceleft",
+                "win.arrange",
+                Some("back"),
+            ),
             ("<Control>Return", "win.add-page", None),
             ("<Control>p", "win.pages", None),
         ];

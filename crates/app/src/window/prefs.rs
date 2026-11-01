@@ -249,6 +249,10 @@ impl CeraWindow {
                     ("Paste", "<Control>v"),
                     ("Delete", "Delete"),
                     ("Deselect", "Escape"),
+                    ("Bring forward", "<Control>bracketright"),
+                    ("Send backward", "<Control>bracketleft"),
+                    ("Bring to front", "<Control><Shift>bracketright"),
+                    ("Send to back", "<Control><Shift>bracketleft"),
                 ],
             ),
         ];

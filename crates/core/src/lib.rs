@@ -8,6 +8,7 @@
 //! - [`NoteFile`]: opens, saves (append-only) and compacts a `.cera` file.
 //! - [`History`]: the only way to edit ink and pages, with undo/redo.
 
+mod arrange;
 mod codec;
 mod error;
 mod file;
@@ -17,6 +18,7 @@ mod model;
 mod simplify;
 mod undo;
 
+pub use arrange::{Arrange, arrange};
 pub use error::{Error, Result};
 pub use file::{AssetInfo, MappedBytes, NewAsset, NoteFile};
 pub use format::{AssetKind, FORMAT_VERSION};

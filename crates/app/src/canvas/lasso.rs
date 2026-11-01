@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Lasso selection (DESIGN.md §9): draw a loop (or, in rectangle mode, drag out a rectangle)
-//! on a page to select the strokes mostly inside it, then drag to move them, or delete, recolour, cut, copy and paste (also into other
-//! notes).
+//! on a page to select the strokes mostly inside it, then drag to move them, or delete,
+//! recolour, reorder, cut, copy and paste (also into other notes).
 //!
 //! While strokes are selected they are left out of the page's ink tiles and drawn from one
 //! texture, rendered once when the selection is made, so dragging costs nothing per frame
@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cera_core::{PageId, Rect, Rgba8, Stroke, Tool, polygon_contains};
+use cera_core::{Arrange, PageId, Rect, Rgba8, Stroke, Tool, arrange, polygon_contains};
 use cera_render::ink;
 use cera_render::tile::{DocId, Grid, Layer, Scale, TileKey};
 use gtk::prelude::*;
@@ -407,6 +407,58 @@ impl Canvas {
         s.strokes = recoloured;
         drop(sel);
         self.queue_draw();
+        self.emit_by_name::<()>("changed", &[]);
+    }
+
+    /// Moves the selection up or down the page's drawing order, through the history. The
+    /// selection is drawn on top until it ends, so the new order shows once it is deselected.
+    pub fn arrange_selection(&self, how: Arrange) {
+        let imp = self.imp();
+        let Some(note) = self.note() else { return };
+        let mut sel = imp.selection.borrow_mut();
+        let Some(s) = sel.as_mut() else { return };
+        let result = {
+            let mut note = note.borrow_mut();
+            let crate::note::Note { history, doc, .. } = &mut *note;
+            let Some(index) = doc.page_index(s.page) else {
+                return;
+            };
+            let all = match doc.load_ink(index) {
+                Ok(all) => all.to_vec(),
+                Err(e) => {
+                    tracing::warn!("cannot read ink: {e}");
+                    return;
+                }
+            };
+            // Highlighters always sit under pen ink, so only strokes of a selected tool count.
+            let tools: Vec<Tool> = s.strokes.iter().map(|st| st.tool()).collect();
+            let Some((order, moved)) = arrange(
+                all.len(),
+                &s.indices,
+                |i| tools.contains(&all[i].tool()) && all[i].bounds().intersects(&s.bounds),
+                how,
+            ) else {
+                return;
+            };
+            let changes = order
+                .iter()
+                .enumerate()
+                .filter(|&(p, &i)| p != i)
+                .map(|(p, &i)| (p, all[i].clone()))
+                .collect();
+            history
+                .replace_strokes(doc, s.page, changes)
+                .map(|()| moved)
+        };
+        match result {
+            // The other strokes keep their order relative to each other, so their tiles stay.
+            Ok(moved) => s.indices = moved,
+            Err(e) => {
+                tracing::warn!("cannot reorder the selection: {e}");
+                return;
+            }
+        }
+        drop(sel);
         self.emit_by_name::<()>("changed", &[]);
     }
 

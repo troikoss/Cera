@@ -285,6 +285,17 @@
                                       </object>
                                     </child>
                                     <child>
+                                      <object class="GtkMenuButton">
+                                        <property name="icon-name">cera-arrange-symbolic</property>
+                                        <property name="tooltip-text" translatable="yes">Arrange</property>
+                                        <property name="menu-model">arrange_menu</property>
+                                        <property name="direction">up</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
                                       <object class="GtkButton">
                                         <property name="icon-name">user-trash-symbolic</property>
                                         <property name="tooltip-text" translatable="yes">Delete</property>
@@ -326,6 +337,30 @@
       </object>
     </property>
   </template>
+  <menu id="arrange_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Bring to _Front</attribute>
+        <attribute name="action">win.arrange</attribute>
+        <attribute name="target">front</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Bring For_ward</attribute>
+        <attribute name="action">win.arrange</attribute>
+        <attribute name="target">forward</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Send Back_ward</attribute>
+        <attribute name="action">win.arrange</attribute>
+        <attribute name="target">backward</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Send to _Back</attribute>
+        <attribute name="action">win.arrange</attribute>
+        <attribute name="target">back</attribute>
+      </item>
+    </section>
+  </menu>
   <menu id="primary_menu">
     <section>
       <item>
