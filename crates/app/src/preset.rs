@@ -57,16 +57,51 @@ pub enum EraserMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", from = "RoleWire")]
 pub enum Role {
     Ink,
-    /// Drawn under all ink, or above it with `over_ink`.
-    Highlighter {
-        over_ink: bool,
-    },
+    /// Drawn over all ink.
+    Highlighter,
     Eraser {
         mode: EraserMode,
     },
+}
+
+/// How a role is read: as written now, or as the first presets build wrote a highlighter
+/// (`{"highlighter": {"over_ink": …}}`, before highlighters always drew over the ink).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RoleWire {
+    Current(RoleCurrent),
+    Old(RoleOld),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RoleCurrent {
+    Ink,
+    Highlighter,
+    Eraser { mode: EraserMode },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RoleOld {
+    Highlighter {
+        #[serde(rename = "over_ink")]
+        _over_ink: bool,
+    },
+}
+
+impl From<RoleWire> for Role {
+    fn from(w: RoleWire) -> Self {
+        match w {
+            RoleWire::Current(RoleCurrent::Ink) => Role::Ink,
+            RoleWire::Current(RoleCurrent::Highlighter)
+            | RoleWire::Old(RoleOld::Highlighter { .. }) => Role::Highlighter,
+            RoleWire::Current(RoleCurrent::Eraser { mode }) => Role::Eraser { mode },
+        }
+    }
 }
 
 impl Role {
@@ -77,7 +112,7 @@ impl Role {
     pub fn icon(self) -> &'static str {
         match self {
             Role::Ink => "cera-pen-symbolic",
-            Role::Highlighter { .. } => "cera-highlighter-symbolic",
+            Role::Highlighter => "cera-highlighter-symbolic",
             Role::Eraser { .. } => "cera-eraser-symbolic",
         }
     }
@@ -85,7 +120,7 @@ impl Role {
     pub fn width_range(self) -> (f32, f32) {
         match self {
             Role::Ink => PEN_WIDTH_RANGE,
-            Role::Highlighter { .. } => HIGHLIGHTER_WIDTH_RANGE,
+            Role::Highlighter => HIGHLIGHTER_WIDTH_RANGE,
             Role::Eraser { .. } => ERASER_WIDTH_RANGE,
         }
     }
@@ -93,7 +128,7 @@ impl Role {
     pub fn default_widths(self) -> [f32; MAX_SIZE_SLOTS] {
         match self {
             Role::Ink => PEN_WIDTHS,
-            Role::Highlighter { .. } => HIGHLIGHTER_WIDTHS,
+            Role::Highlighter => HIGHLIGHTER_WIDTHS,
             Role::Eraser { .. } => ERASER_WIDTHS,
         }
     }
@@ -142,7 +177,7 @@ impl Default for Preset {
 impl Preset {
     /// A preset with the defaults for its role.
     pub fn new(id: PresetId, name: &str, role: Role) -> Self {
-        let highlighter = matches!(role, Role::Highlighter { .. });
+        let highlighter = matches!(role, Role::Highlighter);
         let colors = if highlighter {
             HIGHLIGHTER_COLORS
         } else {
@@ -163,7 +198,8 @@ impl Preset {
                 1.0
             },
             pressure: role == Role::Ink,
-            roundness: 1.0,
+            // Highlighters have a square tip, like a felt marker.
+            roundness: if highlighter { 0.0 } else { 1.0 },
             pattern: LinePattern::Solid,
             spacing: 1.0,
         }
@@ -173,7 +209,7 @@ impl Preset {
     pub fn defaults() -> Vec<Preset> {
         vec![
             Preset::new(0, "Pen", Role::Ink),
-            Preset::new(1, "Highlighter", Role::Highlighter { over_ink: false }),
+            Preset::new(1, "Highlighter", Role::Highlighter),
             Preset::new(
                 2,
                 "Eraser",
@@ -195,8 +231,7 @@ impl Preset {
     pub fn stroke_style(&self) -> StrokeStyle {
         StrokeStyle {
             layer: match self.role {
-                Role::Highlighter { over_ink: true } => Layer::Over,
-                Role::Highlighter { over_ink: false } => Layer::Under,
+                Role::Highlighter => Layer::Over,
                 Role::Ink | Role::Eraser { .. } => Layer::Ink,
             },
             roundness: (self.roundness.clamp(0.0, 1.0) * 255.0).round() as u8,
@@ -261,7 +296,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn highlighter_draws_translucent_under_the_ink() {
+    fn highlighter_draws_translucent_over_the_ink() {
         let presets = Preset::defaults();
         let h = &presets[1];
         assert_eq!(
@@ -271,23 +306,17 @@ mod tests {
                 ..HIGHLIGHTER_COLORS[0]
             }
         );
-        assert_eq!(h.stroke_style(), StrokeStyle::HIGHLIGHTER);
+        let style = h.stroke_style();
+        assert_eq!((style.layer, style.roundness), (Layer::Over, 0));
         assert!(!h.pressure);
         assert_eq!(presets[0].stroke_style(), StrokeStyle::PEN);
-        let over = Preset {
-            role: Role::Highlighter { over_ink: true },
-            roundness: 0.0,
-            ..h.clone()
-        };
-        let style = over.stroke_style();
-        assert_eq!((style.layer, style.roundness), (Layer::Over, 0));
     }
 
     #[test]
     fn becoming_an_eraser_resets_the_sizes() {
         let mut p = Preset::new(4, "Marker", Role::Ink);
         p.width = 9.0;
-        p.set_role(Role::Highlighter { over_ink: false });
+        p.set_role(Role::Highlighter);
         assert_eq!(p.width, 9.0, "inside the highlighter's range");
         assert_eq!(p.widths[0], HIGHLIGHTER_WIDTH_RANGE.0, "clamped");
         p.set_role(Role::Eraser {
@@ -295,5 +324,23 @@ mod tests {
         });
         assert_eq!(p.widths, ERASER_WIDTHS);
         assert_eq!(p.width, ERASER_WIDTHS[1]);
+    }
+
+    #[test]
+    fn roles_read_old_and_new() {
+        let read = |json: &str| serde_json::from_str::<Role>(json).unwrap();
+        assert_eq!(read(r#""highlighter""#), Role::Highlighter);
+        assert_eq!(
+            read(r#"{"highlighter":{"over_ink":false}}"#),
+            Role::Highlighter
+        );
+        assert_eq!(read(r#""ink""#), Role::Ink);
+        let eraser = Role::Eraser {
+            mode: EraserMode::Stroke,
+        };
+        assert_eq!(read(r#"{"eraser":{"mode":"stroke"}}"#), eraser);
+        for role in [Role::Ink, Role::Highlighter, eraser] {
+            assert_eq!(read(&serde_json::to_string(&role).unwrap()), role);
+        }
     }
 }

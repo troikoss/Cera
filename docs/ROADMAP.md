@@ -53,7 +53,7 @@ Every add-on waits on the add-on system.
 - [ ] Photos: insert images onto a page — D4 (first page element; image asset kind, downscale
       on import)
 - [ ] Tool presets: user-made pen-like tools (size, opacity, pressure, tip roundness,
-      highlighter under or over ink, dashed and dotted lines, whole or partial eraser),
+      highlighter over ink, dashed and dotted lines, whole or partial eraser),
       favourites in the tool bar, any preset as the stylus's secondary action — D3 (stroke
       style in the ink encoding); plan in [tool-presets.md](tool-presets.md). M8 done
       (presets, layers, tip roundness, secondary preset); M9 left: partial eraser, dashed and

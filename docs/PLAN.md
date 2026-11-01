@@ -229,18 +229,20 @@ lines follow in M9.
       348 µs; old notes render pixel-identical (`cera-cli png` before and after)
 - [x] Presets in the settings (settings version 2, migration from the per-tool fields)
 - [x] Tool bar built from the favourite presets plus the lasso; 1–9 pick favourites, L the lasso
-- [x] Preset popover on a tap of the active preset (name, kind, draw over ink, pressure,
+- [x] Preset popover on a tap of the active preset (name, kind, pressure,
       opacity, tip; "Manage presets…"). Swatches and sizes stay in the tool bar only
 - [x] Tools page in Preferences: list, favourite, secondary action (a drop-down), edit,
       duplicate, delete, add, restore defaults
 - [x] The stylus's eraser end and barrel use the secondary preset (or the lasso)
 
-With pressure off, a stroke is stored at full pressure, so it is exactly its width (before,
+Highlighters always draw over the ink, and the default one has a square tip (the "draw over
+ink" option of the first build is gone; settings it wrote still load). With pressure off, a
+stroke is stored at full pressure, so it is exactly its width (before,
 the pen with pressure off drew at 0.6 pressure, about 70 % of its width). P, H and E are gone.
 
 **Test on the tablet:** the eraser end and barrel still erase (and mid-stroke, the barrel);
 pick a highlighter or the lasso as the secondary action in Preferences → Tools and try both;
-make a square highlighter that draws over ink and write under and over it; star and unstar
+write over ink with the highlighter (over the ink, square tip by default); star and unstar
 presets, check the tool bar order and the 1–9 keys; turn pressure off for the pen; open notes
 written before this version and check they look the same.
 

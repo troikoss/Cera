@@ -612,7 +612,7 @@ impl Canvas {
         let highlighter = settings::with(|s| {
             s.presets
                 .iter()
-                .find(|p| matches!(p.role, crate::preset::Role::Highlighter { .. }))
+                .find(|p| matches!(p.role, crate::preset::Role::Highlighter))
                 .map(|p| p.id)
         });
         if let Some(id) = highlighter {

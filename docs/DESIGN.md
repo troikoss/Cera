@@ -103,8 +103,9 @@ The canvas is a custom widget implementing `GtkScrollable` inside a `GtkScrolled
    Zero textures, effectively free on the GPU.
 2. **PDF background** — tiles rendered by Poppler. Only for PDF pages.
 3. **Ink** — tiles rendered by cairo from the page's strokes, transparent background.
-   Each tile draws three passes: highlights under the ink, the ink, highlights set to draw over
-   it (the stroke style's layer). Inside a pass, strokes keep page order.
+   Each tile draws three passes: highlights under the ink (highlighters from before presets),
+   the ink, highlights over it (every highlighter preset). The pass is the stroke style's
+   layer; inside a pass, strokes keep page order.
 4. **Wet ink** — the stroke being drawn right now (see below).
 
 ### Tiles
@@ -377,7 +378,7 @@ AdwApplicationWindow
 - **Tools:** the tool group is built in code from the favourite presets (`preset.rs`, in the
   settings; docs/tool-presets.md) plus the lasso: each preset button shows its kind's icon with
   a dot in its current colour; 1–9 pick favourites, L the lasso. A preset is ink, a
-  highlighter (under or over the ink) or an eraser, with its own swatches, size slots,
+  highlighter (drawn over the ink; square tip by default) or an eraser, with its own swatches, size slots,
   opacity, pressure switch and tip roundness. Tap the active preset again → its options
   (`window/presets.rs`, the same editor as Preferences → Tools, which lists, stars,
   duplicates, deletes and adds presets and picks the stylus's secondary action); the active

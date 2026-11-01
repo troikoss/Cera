@@ -546,7 +546,7 @@ impl CeraWindow {
         let Some(preset) = self.imp().tool_state.preset() else {
             return;
         };
-        let presets: &[Rgba8] = if matches!(preset.role, Role::Highlighter { .. }) {
+        let presets: &[Rgba8] = if matches!(preset.role, Role::Highlighter) {
             &HIGHLIGHTER_COLORS
         } else {
             &PEN_PRESETS

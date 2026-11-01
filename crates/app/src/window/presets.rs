@@ -22,7 +22,7 @@ const KINDS: [&str; 3] = ["Ink", "Highlighter", "Eraser"];
 fn kind_index(role: Role) -> u32 {
     match role {
         Role::Ink => 0,
-        Role::Highlighter { .. } => 1,
+        Role::Highlighter => 1,
         Role::Eraser { .. } => 2,
     }
 }
@@ -30,8 +30,7 @@ fn kind_index(role: Role) -> u32 {
 fn role_label(role: Role) -> &'static str {
     match role {
         Role::Ink => "Ink",
-        Role::Highlighter { over_ink: false } => "Highlighter",
-        Role::Highlighter { over_ink: true } => "Highlighter over ink",
+        Role::Highlighter => "Highlighter",
         Role::Eraser { .. } => "Eraser",
     }
 }
@@ -104,14 +103,8 @@ pub(super) fn preset_editor(id: PresetId) -> gtk::Box {
         .model(&gtk::StringList::new(&KINDS))
         .selected(kind_index(preset.role))
         .build();
-    let over = adw::SwitchRow::builder()
-        .title("Draw over ink")
-        .subtitle("Otherwise under all ink")
-        .active(matches!(preset.role, Role::Highlighter { over_ink: true }))
-        .build();
     general.add(&name);
     general.add(&kind);
-    general.add(&over);
 
     let stroke = adw::PreferencesGroup::builder().title("Stroke").build();
     let pressure = adw::SwitchRow::builder()
@@ -147,43 +140,22 @@ pub(super) fn preset_editor(id: PresetId) -> gtk::Box {
     stroke.add(&opacity);
     stroke.add(&tip);
 
-    let sensitive = {
-        let (over, stroke) = (over.clone(), stroke.clone());
-        move |role: Role| {
-            over.set_sensitive(matches!(role, Role::Highlighter { .. }));
-            stroke.set_sensitive(!role.is_eraser());
-        }
-    };
-    sensitive(preset.role);
-    let role_from = {
-        let (kind, over) = (kind.clone(), over.clone());
-        move || match kind.selected() {
-            0 => Role::Ink,
-            1 => Role::Highlighter {
-                over_ink: over.is_active(),
-            },
-            _ => Role::Eraser {
-                mode: EraserMode::Stroke,
-            },
-        }
-    };
-    let role_from = Rc::new(role_from);
-    let sensitive = Rc::new(sensitive);
+    stroke.set_sensitive(!preset.role.is_eraser());
     kind.connect_selected_notify(glib::clone!(
-        #[strong]
-        role_from,
-        #[strong]
-        sensitive,
-        move |_| {
-            let role = role_from();
-            sensitive(role);
+        #[weak]
+        stroke,
+        move |row| {
+            let role = match row.selected() {
+                0 => Role::Ink,
+                1 => Role::Highlighter,
+                _ => Role::Eraser {
+                    mode: EraserMode::Stroke,
+                },
+            };
+            stroke.set_sensitive(!role.is_eraser());
             edit(id, true, |p| p.set_role(role));
         }
     ));
-    over.connect_active_notify(move |_| {
-        let role = role_from();
-        edit(id, false, |p| p.set_role(role));
-    });
 
     content.append(&general);
     content.append(&stroke);

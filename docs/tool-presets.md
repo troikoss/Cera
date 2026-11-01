@@ -18,7 +18,7 @@ Options per preset:
 - opacity
 - pressure
 - tip roundness (square to round)
-- highlighter (with "draw over ink")
+- highlighter (always drawn over the ink)
 - line pattern (solid, dashed or dotted, with a spacing slider)
 - straight line with angle snapping (later, in the "Handwriting assists" add-on)
 - eraser (whole strokes or partial)
@@ -44,12 +44,13 @@ assists" add-on in ROADMAP.md, because they change how you draw, not how a strok
 - **Secondary action:** one preset (or the lasso) is the secondary action, for both the eraser
   end and the barrel button. The default is the eraser preset. This replaces the current
   "barrel = eraser or lasso" setting.
-- **Highlighter and z-order:** a preset is ink, a highlighter or an eraser. A highlighter has
-  a "draw over ink" option.
-  - Off (z 0): drawn under all ink, as today.
-  - On (z 1): drawn above all ink.
-  - Ink keeps plain drawing order. Each tile draws three passes: highlights under, then ink,
-    then highlights over.
+- **Highlighter and z-order:** a preset is ink, a highlighter or an eraser. A highlighter is
+  drawn above all ink (changed after M8 landed: the first build had a "draw over ink" option,
+  off by default; it went, and over the ink became the only behaviour). The default
+  highlighter has a square tip.
+  - Ink keeps plain drawing order. Each tile draws three passes: highlights under (strokes
+    from before presets, whose highlighters were drawn under the ink), then ink, then
+    highlights over.
 - **Tip roundness:** one slider. 0 is a square nib aligned to the page axes, 1 is round, and
   values in between give a rounded square. There is no nib angle.
 - **Partial eraser:** cuts out the points inside the eraser circle and splits the stroke into
@@ -114,7 +115,7 @@ assists" add-on in ROADMAP.md, because they change how you draw, not how a strok
 ### App (`crates/app`)
 - In `settings.rs`, add a `Preset` struct:
   - `id`, `name`
-  - `role`: `Ink | Highlighter { over_ink } | Eraser { mode }`
+  - `role`: `Ink | Highlighter | Eraser { mode }`
   - `colors`, `widths`, `width`, `opacity`, `pressure`, `roundness`
   - `pattern`, `spacing` (stored now, used in M9)
 
@@ -175,8 +176,8 @@ assists" add-on in ROADMAP.md, because they change how you draw, not how a strok
 - `cargo bench -p cera-render`: square tip against round.
 - `cargo run -p cera-cli -- png` on an old v1 note gives output identical to before.
 - Headless: `tools/headless/run.sh` draws with the mouse using each default preset, and with a
-  square-tip highlighter set to draw over ink. The screenshots are compared.
+  square-tip highlighter over the ink. The screenshots are compared.
 - Test on the tablet:
-  - M8: favourite and unfavourite presets, create a square highlighter, try draw over ink,
+  - M8: favourite and unfavourite presets, create a square highlighter and write over ink,
     pick a different secondary preset for the barrel, and open old notes.
   - M9: partial-erase through pressure strokes, draw dashed and dotted lines, and check undo.
