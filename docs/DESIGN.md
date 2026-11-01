@@ -332,15 +332,15 @@ AdwApplicationWindow
    └─ AdwOverlaySplitView                  (AdwBreakpoint < 600sp → sidebar overlays)
       ├─ sidebar: GtkStack
       │  ├─ files: AdwToolbarView
-      │  │  ├─ top: AdwHeaderBar [+ menu: Note, Folder, Import PDF…] [vault menu ▾] [pages] [search]
+      │  │  ├─ top: AdwHeaderBar [+ menu: Note, Folder, Import PDF…] [vault menu ▾] [search]
       │  │  │       GtkSearchBar
       │  │  └─ GtkScrolledWindow > GtkListView (vault tree)
       │  └─ pages: AdwToolbarView
       │     ├─ top: AdwHeaderBar [back to files] "Pages" [only bookmarks]
       │     ├─ GtkScrolledWindow > GtkGridView (page thumbnails)
-      │     └─ bottom: [insert ▾] [paper ▾] [earlier] [later] [delete]
+      │     └─ bottom: [insert ▾] [paper ▾] [to top] [to bottom] [delete]
       └─ content: AdwToolbarView
-         ├─ top: AdwHeaderBar [sidebar] AdwWindowTitle("Lecture 03", "Page 2 of 18")
+         ├─ top: AdwHeaderBar [sidebar] [pages] AdwWindowTitle("Lecture 03", "Page 2 of 18")
          │                    [add page] [menu]
          │       AdwTabBar (autohide)
          └─ AdwTabView → per tab: GtkOverlay
@@ -372,11 +372,13 @@ AdwApplicationWindow
   and redraws the selection's texture once. Tool settings and slots are app settings
   (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.
-- **Pages** (`window/pages.rs`): the Pages button in the files' header (or Ctrl+P, which
-  also opens a hidden sidebar) switches the sidebar to the current note's pages; a back
-  button returns to the files. The pages view is a `GtkGridView` of page thumbnails: tapping
-  one shows that page, and the selection follows the note as it scrolls; below it, move
-  earlier/later, insert blank before/after, delete and change paper act on the selected page.
+- **Pages** (`window/pages.rs`): the Pages toggle next to the sidebar button (or Ctrl+P)
+  opens the sidebar on the current note's pages; toggled off or with the back button it
+  returns to the files, and hiding the sidebar leaves the pages too. The pages view is a
+  `GtkGridView` of page thumbnails: tapping one shows that page, and the selection follows
+  the note as it scrolls; below it, insert blank before/after, change paper and delete act
+  on the selected page, and two buttons scroll the thumbnails to the top or bottom without
+  moving the note.
   A right click or a hold on a thumbnail selects it and opens its context menu: insert
   before/after, paper, move earlier/later, bookmark (or remove it) and delete; stylus and
   finger menus sit above the press with tall rows, like the canvas's. Thumbnails are whole-page

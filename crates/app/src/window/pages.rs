@@ -3,8 +3,8 @@
 //! note to jump to, reorder, insert blank pages, delete them or change their paper. Every
 //! change goes through the note's history, so it undoes like any other edit.
 //!
-//! The Pages button in the files' header (Ctrl+P) switches the sidebar to the pages, and a
-//! back button returns. Tapping a thumbnail shows that page; scrolling the note moves the
+//! The Pages toggle next to the sidebar button (Ctrl+P) switches the sidebar to the pages,
+//! and a back button returns. Tapping a thumbnail shows that page; scrolling the note moves the
 //! selection. A right click or a hold on a thumbnail opens its context menu. Each thumbnail
 //! has a small bookmark toggle in its corner, and a header toggle shows only the bookmarked
 //! pages (a `FilterListModel` over all of them; the grid's positions are then not page
@@ -170,25 +170,25 @@ impl CeraWindow {
         let pages = gio::ActionEntry::builder("pages")
             .state(false.to_variant())
             .activate(|win: &Self, action, _| {
-                let on = action.state().and_then(|s| s.get::<bool>()) == Some(true);
-                let split = &win.imp().split_view;
-                // Shown but hidden with the sidebar: just bring the sidebar back.
-                if on && !split.shows_sidebar() {
-                    split.set_show_sidebar(true);
-                } else {
-                    action.set_state(&(!on).to_variant());
-                    if !on {
-                        split.set_show_sidebar(true);
-                    }
+                let on = action.state().and_then(|s| s.get::<bool>()) != Some(true);
+                action.set_state(&on.to_variant());
+                if on {
+                    win.imp().split_view.set_show_sidebar(true);
                 }
                 win.sync_pages();
             })
             .build();
         self.add_action_entries([pages]);
+        // Hiding the sidebar leaves the pages too; it comes back on the files.
         imp.split_view.connect_show_sidebar_notify(glib::clone!(
             #[weak(rename_to = win)]
             self,
-            move |_| win.sync_pages()
+            move |split| {
+                if !split.shows_sidebar() {
+                    win.change_action_state("pages", &false.to_variant());
+                }
+                win.sync_pages();
+            }
         ));
     }
 
@@ -242,6 +242,7 @@ impl CeraWindow {
             Some(_) => "grid",
         };
         panel.stack.set_visible_child_name(name);
+        self.update_pages_actions();
     }
 
     fn new_sorter(&self, canvas: Canvas) -> Rc<Sorter> {
@@ -401,6 +402,9 @@ impl CeraWindow {
             s.move_by(p.and_then(|p| p.parse::<i64>().ok()).unwrap_or(0))
         });
         with_sorter("delete", |s, _| s.delete());
+        with_sorter("scroll", |s, p| {
+            s.scroll_to_end(p.as_deref() == Some("bottom"))
+        });
         with_sorter("bookmark", |s, _| s.toggle_bookmark());
         group
     }
@@ -409,20 +413,25 @@ impl CeraWindow {
         let Some(panel) = self.imp().pages.get() else {
             return;
         };
-        let (any, several) = self
-            .imp()
-            .sorter
-            .borrow()
-            .as_ref()
-            .map_or((false, false), |s| {
-                (s.selected().is_some(), s.store.n_items() > 1)
-            });
+        let (any, several, shown) =
+            self.imp()
+                .sorter
+                .borrow()
+                .as_ref()
+                .map_or((false, false, false), |s| {
+                    (
+                        s.selected().is_some(),
+                        s.store.n_items() > 1,
+                        s.filtered.n_items() > 0,
+                    )
+                });
         for (name, enabled) in [
             ("insert", any),
             ("bookmark", any),
             ("paper", any),
             ("move", any && several),
             ("delete", any && several),
+            ("scroll", shown),
         ] {
             if let Some(action) = panel
                 .actions
@@ -485,11 +494,15 @@ fn action_bar() -> gtk::CenterBox {
     );
     let middle = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     middle.append(&button(
-        "go-previous-symbolic",
-        "Move earlier",
-        "pages.move::-1",
+        "go-top-symbolic",
+        "Scroll to top",
+        "pages.scroll::top",
     ));
-    middle.append(&button("go-next-symbolic", "Move later", "pages.move::1"));
+    middle.append(&button(
+        "go-bottom-symbolic",
+        "Scroll to bottom",
+        "pages.scroll::bottom",
+    ));
     let delete = button("user-trash-symbolic", "Delete page", "pages.delete::");
     delete.add_css_class("destructive-action");
     let bar = gtk::CenterBox::new();
@@ -726,6 +739,23 @@ impl Sorter {
             .doc
             .page(index)
             .is_ok_and(|p| p.bookmark().is_some())
+    }
+
+    /// Scrolls the thumbnails to the first or last one shown; the note stays where it is.
+    fn scroll_to_end(&self, bottom: bool) {
+        let count = self.filtered.n_items();
+        if count == 0 {
+            return;
+        }
+        if let Some(grid) = self
+            .canvas
+            .root()
+            .and_downcast::<CeraWindow>()
+            .and_then(|w| w.imp().pages.get().map(|p| p.grid.clone()))
+        {
+            let position = if bottom { count - 1 } else { 0 };
+            grid.scroll_to(position, gtk::ListScrollFlags::NONE, None);
+        }
     }
 
     fn toggle_bookmark(&self) {
