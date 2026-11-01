@@ -19,7 +19,8 @@ After the release, the D1 roadmap items (2026-11-01): editable size slots, a col
 slot counts in preferences, rectangle select, layer order for a selection; then the first
 D2 items: pen (stroke-touch) select as a third lasso mode, page bookmarks (manifest
 version 2) and add space as a fourth lasso mode. The lasso lost its swatches; a selection is
-recoloured from Change style in the context menu. Checked with injected pointer and key input in the headless compositor; yours to
+recoloured from Change style in the context menu. The page sorter moved from its dialog into
+the sidebar, as a view next to the files. Checked with injected pointer and key input in the headless compositor; yours to
 test on the tablet.
 
 ## M0 — Skeleton

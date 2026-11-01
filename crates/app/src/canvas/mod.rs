@@ -434,6 +434,12 @@ impl Canvas {
         self.imp().current_page.get()
     }
 
+    /// How often `page`'s ink was edited (or selected from) since the note was shown; page
+    /// thumbnails compare it to know when they are stale.
+    pub fn ink_generation(&self, page: PageId) -> u64 {
+        self.imp().ink_gen.borrow().get(&page).copied().unwrap_or(0)
+    }
+
     pub fn page_count(&self) -> u32 {
         self.imp()
             .doc

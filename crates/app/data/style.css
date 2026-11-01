@@ -65,7 +65,7 @@ popover.touch-menu modelbutton {
   box-shadow: none;
 }
 
-/* Page thumbnails in the page sorter: white paper on the dialog background. */
+/* Page thumbnails in the page sorter: white paper on the sidebar background. */
 picture.page-thumb {
   background-color: white;
   box-shadow: 0 1px 3px rgb(0 0 0 / 25%);

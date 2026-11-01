@@ -37,6 +37,7 @@ impl CeraWindow {
                 win.update_title();
                 win.update_note_actions();
                 win.update_toolbar();
+                win.sync_pages();
                 win.schedule_workspace_save();
             }
         ));
@@ -57,6 +58,7 @@ impl CeraWindow {
                 win.update_stack();
                 win.update_title();
                 win.update_note_actions();
+                win.sync_pages();
                 win.schedule_workspace_save();
             }
         ));
@@ -364,7 +366,6 @@ impl CeraWindow {
             ("zoom-out", has_note),
             ("zoom-fit", has_note),
             ("close-tab", has_note),
-            ("pages", has_note),
             ("export-pdf", has_note),
             ("export-png", has_note),
             ("add-page", has_note),

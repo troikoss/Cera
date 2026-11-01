@@ -5,7 +5,7 @@
 //! - `toolbar.rs`: the floating tool bar: colour and size slots and their popovers.
 //! - `tabs.rs`: notes in tabs: opening, autosave, closing, restoring the workspace.
 //! - `files.rs`: the vault: opening one; creating, renaming, moving, trashing and importing.
-//! - `pages.rs`: the page sorter.
+//! - `pages.rs`: the page sorter, a view of the sidebar.
 //! - `export.rs`: PDF and PNG export.
 //! - `prefs.rs`: preferences and the shortcuts list.
 
@@ -49,6 +49,8 @@ mod imp {
         #[template_child]
         pub toasts: TemplateChild<adw::ToastOverlay>,
         #[template_child]
+        pub sidebar_stack: TemplateChild<gtk::Stack>,
+        #[template_child]
         pub sidebar: TemplateChild<Sidebar>,
         #[template_child]
         pub title: TemplateChild<adw::WindowTitle>,
@@ -83,6 +85,9 @@ mod imp {
         pub(super) tool_tap: Cell<(f64, f64)>,
         pub(super) renderer: OnceCell<Rc<Renderer>>,
         pub(super) sinks: RefCell<HashMap<DocId, Sink>>,
+        /// The sidebar's pages view, and its sorter while it is on screen.
+        pub(super) pages: OnceCell<pages::PagesPanel>,
+        pub(super) sorter: RefCell<Option<Rc<pages::Sorter>>>,
         pub(super) next_doc: Cell<DocId>,
         pub(super) autosave: RefCell<HashMap<DocId, glib::SourceId>>,
         pub(super) vault: RefCell<Option<Vault>>,
@@ -114,6 +119,7 @@ mod imp {
             self.parent_constructed();
             let obj = self.obj();
             obj.setup_actions();
+            obj.setup_pages();
             obj.setup_bookmarks();
             obj.setup_renderer();
             obj.setup_toolbar();
@@ -311,7 +317,6 @@ impl CeraWindow {
                 })
                 .build(),
             simple("add-page", Self::add_page),
-            simple("pages", Self::show_pages),
             simple("preferences", Self::show_preferences),
             simple("shortcuts", Self::show_shortcuts),
             simple("export-pdf", |win| win.export(export::Format::Pdf)),

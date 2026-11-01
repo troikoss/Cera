@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The page sorter (DESIGN.md §9): a grid of page thumbnails to reorder pages, insert blank
-//! ones, delete them or change their paper. Every change goes through the note's history, so
-//! it undoes like any other edit.
+//! The page sorter (DESIGN.md §9), a view of the sidebar: page thumbnails of the current tab's
+//! note to jump to, reorder, insert blank pages, delete them or change their paper. Every
+//! change goes through the note's history, so it undoes like any other edit.
+//!
+//! The header's Pages button (Ctrl+P) switches the sidebar between the vault's files and
+//! the pages. Tapping a thumbnail shows that page; scrolling the note moves the selection.
+//! The sorter is bound to the selected tab while the view is on screen and dropped, with its
+//! thumbnails, when the view is hidden or the sidebar closes.
 //!
 //! Thumbnails are whole-page renders from the window's render threads under a document id
-//! of their own, asked for only for the cells on screen and kept in a small LRU.
+//! of their own, asked for only for the cells on screen and kept in a small LRU. A thumbnail
+//! remembers the page's ink generation and spec it was drawn from, and is drawn again once
+//! the note is edited (a short while after the last edit, not per stroke).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use std::time::Duration;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -22,16 +30,34 @@ use crate::canvas::Canvas;
 use crate::note::SharedNote;
 
 /// Thumbnail width in logical pixels.
-const THUMB_WIDTH: f64 = 120.0;
+const THUMB_WIDTH: f64 = 110.0;
 /// Memory for thumbnail textures; about 50 A4 thumbnails at 2× scale.
 const THUMB_BUDGET: usize = 16 << 20;
+/// Thumbnails are brought up to date this long after the last edit.
+const REFRESH_DELAY: Duration = Duration::from_millis(400);
 
 #[cfg(target_endian = "little")]
 const PIXEL_FORMAT: gdk::MemoryFormat = gdk::MemoryFormat::B8g8r8a8Premultiplied;
 #[cfg(target_endian = "big")]
 const PIXEL_FORMAT: gdk::MemoryFormat = gdk::MemoryFormat::A8r8g8b8Premultiplied;
 
-struct Sorter {
+/// What a thumbnail was drawn from: the page's ink generation and its spec.
+type Version = (u64, PageSpec);
+
+/// The sidebar view's widgets; built once per window.
+pub(super) struct PagesPanel {
+    stack: gtk::Stack,
+    grid: gtk::GridView,
+    actions: gio::SimpleActionGroup,
+}
+
+/// A cell on screen.
+struct BoundCell {
+    picture: gtk::Picture,
+    mark: gtk::Widget,
+}
+
+pub(super) struct Sorter {
     me: std::rc::Weak<Sorter>,
     canvas: Canvas,
     note: SharedNote,
@@ -42,20 +68,135 @@ struct Sorter {
     paper: Paper,
     store: gio::ListStore,
     selection: gtk::SingleSelection,
-    thumbs: RefCell<HashMap<PageId, (gdk::Texture, usize)>>,
+    thumbs: RefCell<HashMap<PageId, (gdk::Texture, usize, Version)>>,
+    /// Asked-for thumbnails and what they will be drawn from.
+    pending: RefCell<HashMap<PageId, Version>>,
     lru: RefCell<VecDeque<PageId>>,
     thumb_bytes: Cell<usize>,
     /// Cells on screen, by the page they show.
-    bound: RefCell<HashMap<PageId, gtk::Picture>>,
+    bound: RefCell<HashMap<PageId, BoundCell>>,
     requested: Cell<bool>,
+    refresh: RefCell<Option<glib::SourceId>>,
+    /// Set while the sorter itself moves the note or the selection, so neither follows the
+    /// other back.
+    syncing: Cell<bool>,
+    handlers: RefCell<Vec<glib::SignalHandlerId>>,
 }
 
 impl CeraWindow {
-    pub(super) fn show_pages(&self) {
-        let Some(canvas) = self.canvas() else { return };
-        let Some(note) = canvas.note() else { return };
-        canvas.clear_selection();
+    /// Builds the sidebar's pages view and adds it next to the files.
+    pub(super) fn setup_pages(&self) {
         let imp = self.imp();
+        let grid = gtk::GridView::builder()
+            .min_columns(1)
+            .max_columns(4)
+            .build();
+        let scroller = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .child(&grid)
+            .build();
+        let empty = adw::StatusPage::builder()
+            .icon_name("view-grid-symbolic")
+            .title("No note open")
+            .css_classes(["compact"])
+            .build();
+        let stack = gtk::Stack::new();
+        stack.add_named(&scroller, Some("grid"));
+        stack.add_named(&empty, Some("empty"));
+
+        let back = gtk::Button::builder()
+            .icon_name("go-previous-symbolic")
+            .tooltip_text("Files")
+            .action_name("win.pages")
+            .build();
+        let header = adw::HeaderBar::builder()
+            .title_widget(&adw::WindowTitle::new("Pages", ""))
+            .build();
+        header.pack_start(&back);
+
+        let root = adw::ToolbarView::new();
+        root.add_top_bar(&header);
+        root.add_bottom_bar(&action_bar());
+        root.set_content(Some(&stack));
+        let actions = self.pages_actions();
+        root.insert_action_group("pages", Some(&actions));
+        imp.sidebar_stack.add_named(&root, Some("pages"));
+
+        let _ = imp.pages.set(PagesPanel {
+            stack,
+            grid,
+            actions,
+        });
+
+        let pages = gio::ActionEntry::builder("pages")
+            .state(false.to_variant())
+            .activate(|win: &Self, action, _| {
+                let on = action.state().and_then(|s| s.get::<bool>()) == Some(true);
+                let split = &win.imp().split_view;
+                // Shown but hidden with the sidebar: just bring the sidebar back.
+                if on && !split.shows_sidebar() {
+                    split.set_show_sidebar(true);
+                } else {
+                    action.set_state(&(!on).to_variant());
+                    if !on {
+                        split.set_show_sidebar(true);
+                    }
+                }
+                win.sync_pages();
+            })
+            .build();
+        self.add_action_entries([pages]);
+        imp.split_view.connect_show_sidebar_notify(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            move |_| win.sync_pages()
+        ));
+    }
+
+    fn pages_shown(&self) -> bool {
+        self.action_state("pages").and_then(|s| s.get::<bool>()) == Some(true)
+    }
+
+    /// Shows the files or the pages in the sidebar, and binds the sorter to the selected
+    /// tab's note while the pages are on screen (or drops it).
+    pub(super) fn sync_pages(&self) {
+        let imp = self.imp();
+        let Some(panel) = imp.pages.get() else { return };
+        let shown = self.pages_shown();
+        imp.sidebar_stack
+            .set_visible_child_name(if shown { "pages" } else { "files" });
+        let canvas = (shown && imp.split_view.shows_sidebar())
+            .then(|| self.canvas())
+            .flatten()
+            .filter(|c| c.note().is_some());
+        let current = imp.sorter.borrow().as_ref().map(|s| s.canvas.clone());
+        if current == canvas {
+            self.update_pages_actions();
+            return;
+        }
+        if let Some(old) = imp.sorter.take() {
+            self.drop_sorter(&old);
+        }
+        panel.grid.set_model(None::<&gtk::SelectionModel>);
+        panel.grid.set_factory(None::<&gtk::ListItemFactory>);
+        match canvas {
+            Some(canvas) => {
+                let sorter = self.new_sorter(canvas);
+                panel.grid.set_factory(Some(&sorter.factory()));
+                panel.grid.set_model(Some(&sorter.selection));
+                panel.stack.set_visible_child_name("grid");
+                *imp.sorter.borrow_mut() = Some(sorter.clone());
+                sorter.follow_page(true);
+            }
+            None => panel.stack.set_visible_child_name("empty"),
+        }
+        self.update_pages_actions();
+    }
+
+    fn new_sorter(&self, canvas: Canvas) -> Rc<Sorter> {
+        let imp = self.imp();
+        let note = canvas.note().expect("checked by the caller");
         let doc = imp.next_doc.get();
         imp.next_doc.set(doc + 1);
         let renderer = self.renderer();
@@ -70,9 +211,10 @@ impl CeraWindow {
         }
         let store = gio::ListStore::new::<glib::BoxedAnyObject>();
         let selection = gtk::SingleSelection::new(Some(store.clone()));
+        selection.set_autoselect(false);
         let sorter = Rc::new_cyclic(|me| Sorter {
             me: me.clone(),
-            canvas,
+            canvas: canvas.clone(),
             note,
             renderer,
             doc,
@@ -81,10 +223,14 @@ impl CeraWindow {
             store,
             selection,
             thumbs: RefCell::default(),
+            pending: RefCell::default(),
             lru: RefCell::default(),
             thumb_bytes: Cell::new(0),
             bound: RefCell::default(),
             requested: Cell::new(false),
+            refresh: RefCell::default(),
+            syncing: Cell::new(false),
+            handlers: RefCell::default(),
         });
         let weak = Rc::downgrade(&sorter);
         imp.sinks.borrow_mut().insert(
@@ -95,20 +241,118 @@ impl CeraWindow {
                 }
             }),
         );
-        sorter.reload(Some(sorter.canvas.current_page()));
-        let dialog = sorter.build_dialog();
-        dialog.connect_closed(glib::clone!(
+        sorter.reload();
+
+        // A tap on a thumbnail (or the arrow keys) shows that page.
+        let weak = Rc::downgrade(&sorter);
+        sorter.selection.connect_selected_notify(glib::clone!(
             #[weak(rename_to = win)]
             self,
-            #[strong]
-            sorter,
             move |_| {
-                win.imp().sinks.borrow_mut().remove(&sorter.doc);
-                sorter.renderer.close_doc(sorter.doc);
-                win.update_note_actions();
+                win.update_pages_actions();
+                let Some(sorter) = weak.upgrade() else { return };
+                if sorter.syncing.get() {
+                    return;
+                }
+                if let Some(index) = sorter.selected()
+                    && index as u32 != sorter.canvas.current_page()
+                {
+                    sorter.syncing.set(true);
+                    sorter.canvas.show_page(index);
+                    sorter.syncing.set(false);
+                }
             }
         ));
-        dialog.present(Some(self));
+        let weak = Rc::downgrade(&sorter);
+        let changed = canvas.connect_local("changed", false, move |_| {
+            if let Some(sorter) = weak.upgrade() {
+                sorter.refresh_soon();
+            }
+            None
+        });
+        let weak = Rc::downgrade(&sorter);
+        let page = canvas.connect_notify_local(Some("current-page"), move |_, _| {
+            if let Some(sorter) = weak.upgrade() {
+                sorter.follow_page(false);
+            }
+        });
+        sorter.handlers.borrow_mut().extend([changed, page]);
+        sorter
+    }
+
+    fn drop_sorter(&self, sorter: &Sorter) {
+        self.imp().sinks.borrow_mut().remove(&sorter.doc);
+        sorter.renderer.close_doc(sorter.doc);
+        if let Some(source) = sorter.refresh.take() {
+            source.remove();
+        }
+        for handler in sorter.handlers.take() {
+            sorter.canvas.disconnect(handler);
+        }
+        tracing::debug!(
+            bytes = sorter.thumb_bytes.get(),
+            "page sorter released its thumbnails"
+        );
+    }
+
+    fn pages_actions(&self) -> gio::SimpleActionGroup {
+        let group = gio::SimpleActionGroup::new();
+        let with_sorter = |name: &str, f: fn(&Sorter, Option<String>)| {
+            let action = gio::SimpleAction::new(name, Some(glib::VariantTy::STRING));
+            action.connect_activate(glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                move |_, param| {
+                    let sorter = win.imp().sorter.borrow().clone();
+                    if let Some(sorter) = sorter {
+                        f(&sorter, param.and_then(|p| p.get::<String>()));
+                    }
+                }
+            ));
+            group.add_action(&action);
+        };
+        with_sorter("insert", |s, p| s.insert(p.as_deref() == Some("after")));
+        with_sorter("paper", |s, p| {
+            s.set_paper(match p.as_deref() {
+                Some("ruled") => PaperKind::Ruled,
+                Some("grid") => PaperKind::Grid,
+                Some("dots") => PaperKind::Dots,
+                _ => PaperKind::Blank,
+            })
+        });
+        with_sorter("move", |s, p| {
+            s.move_by(p.and_then(|p| p.parse::<i64>().ok()).unwrap_or(0))
+        });
+        with_sorter("delete", |s, _| s.delete());
+        group
+    }
+
+    fn update_pages_actions(&self) {
+        let Some(panel) = self.imp().pages.get() else {
+            return;
+        };
+        let (any, several) = self
+            .imp()
+            .sorter
+            .borrow()
+            .as_ref()
+            .map_or((false, false), |s| {
+                (s.selected().is_some(), s.store.n_items() > 1)
+            });
+        for (name, enabled) in [
+            ("insert", any),
+            ("paper", any),
+            ("move", any && several),
+            ("delete", any && several),
+        ] {
+            if let Some(action) = panel
+                .actions
+                .lookup_action(name)
+                .and_downcast::<gio::SimpleAction>()
+            {
+                action.set_enabled(enabled);
+            }
+        }
     }
 
     /// Paper for new pages: the vault's choice for new notes.
@@ -120,6 +364,64 @@ impl CeraWindow {
             .map(|v| v.config.new_note.page_spec().paper)
             .unwrap_or_else(|| crate::vault::NewNote::default().page_spec().paper)
     }
+}
+
+/// Insert, paper, move and delete, for the selected page.
+fn action_bar() -> gtk::CenterBox {
+    let insert_menu = gio::Menu::new();
+    insert_menu.append(Some("Insert Page _Before"), Some("pages.insert::before"));
+    insert_menu.append(Some("Insert Page _After"), Some("pages.insert::after"));
+    let paper_menu = gio::Menu::new();
+    for (label, kind) in [
+        ("_Blank", "blank"),
+        ("_Ruled", "ruled"),
+        ("_Grid", "grid"),
+        ("_Dots", "dots"),
+    ] {
+        paper_menu.append(Some(label), Some(&format!("pages.paper::{kind}")));
+    }
+    // Detailed names ("pages.move::1") set the action's target too.
+    let button = |icon: &str, tooltip: &str, action: &str| {
+        let button = gtk::Button::builder()
+            .icon_name(icon)
+            .tooltip_text(tooltip)
+            .build();
+        button.set_detailed_action_name(action);
+        button
+    };
+    let left = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    left.append(
+        &gtk::MenuButton::builder()
+            .icon_name("cera-page-add-symbolic")
+            .tooltip_text("Insert page")
+            .menu_model(&insert_menu)
+            .build(),
+    );
+    left.append(
+        &gtk::MenuButton::builder()
+            .icon_name("view-grid-symbolic")
+            .tooltip_text("Paper")
+            .menu_model(&paper_menu)
+            .build(),
+    );
+    let middle = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    middle.append(&button(
+        "go-previous-symbolic",
+        "Move earlier",
+        "pages.move::-1",
+    ));
+    middle.append(&button("go-next-symbolic", "Move later", "pages.move::1"));
+    let delete = button("user-trash-symbolic", "Delete page", "pages.delete::");
+    delete.add_css_class("destructive-action");
+    let bar = gtk::CenterBox::new();
+    bar.set_start_widget(Some(&left));
+    bar.set_center_widget(Some(&middle));
+    bar.set_end_widget(Some(&delete));
+    bar.set_margin_top(6);
+    bar.set_margin_bottom(6);
+    bar.set_margin_start(6);
+    bar.set_margin_end(6);
+    bar
 }
 
 /// A blank page the size of `spec`: its own paper, or `paper` if it shows a PDF.
@@ -134,7 +436,7 @@ pub(super) fn blank_like(spec: &PageSpec, paper: Paper) -> PageSpec {
 }
 
 impl Sorter {
-    fn build_dialog(self: &Rc<Self>) -> adw::Dialog {
+    fn factory(self: &Rc<Self>) -> gtk::SignalListItemFactory {
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup(|_, item| {
             let item = item.downcast_ref::<gtk::ListItem>().expect("a list item");
@@ -170,13 +472,7 @@ impl Sorter {
         factory.connect_bind(move |_, item| {
             let Some(sorter) = weak.upgrade() else { return };
             let item = item.downcast_ref::<gtk::ListItem>().expect("a list item");
-            let Some(id) = item
-                .item()
-                .and_downcast::<glib::BoxedAnyObject>()
-                .map(|b| *b.borrow::<PageId>())
-            else {
-                return;
-            };
+            let Some(id) = page_of(item) else { return };
             let Some(cell) = item.child() else { return };
             let picture = cell
                 .first_child()
@@ -188,202 +484,27 @@ impl Sorter {
                 .and_downcast::<gtk::Label>()
                 .expect("label");
             label.set_label(&(item.position() + 1).to_string());
-            if let Some(mark) = label.next_sibling() {
-                mark.set_visible(sorter.is_bookmarked(item.position() as usize));
-            }
-            sorter.bind(id, &picture);
+            let mark = label.next_sibling().expect("mark");
+            mark.set_visible(sorter.is_bookmarked(id));
+            sorter.bind(id, BoundCell { picture, mark });
         });
         let weak = Rc::downgrade(self);
         factory.connect_unbind(move |_, item| {
             let Some(sorter) = weak.upgrade() else { return };
             let item = item.downcast_ref::<gtk::ListItem>().expect("a list item");
-            if let Some(id) = item
-                .item()
-                .and_downcast::<glib::BoxedAnyObject>()
-                .map(|b| *b.borrow::<PageId>())
-            {
+            if let Some(id) = page_of(item) {
                 sorter.bound.borrow_mut().remove(&id);
             }
         });
-        let grid = gtk::GridView::builder()
-            .model(&self.selection)
-            .factory(&factory)
-            .min_columns(2)
-            .max_columns(8)
-            .build();
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
-            .child(&grid)
-            .build();
-
-        let go = gtk::Button::builder()
-            .label("_Go to Page")
-            .use_underline(true)
-            .css_classes(["suggested-action"])
-            .build();
-        let header = adw::HeaderBar::new();
-        header.pack_start(&go);
-
-        let insert_menu = gio::Menu::new();
-        insert_menu.append(Some("Insert Page _Before"), Some("pages.insert::before"));
-        insert_menu.append(Some("Insert Page _After"), Some("pages.insert::after"));
-        let paper_menu = gio::Menu::new();
-        for (label, kind) in [
-            ("_Blank", "blank"),
-            ("_Ruled", "ruled"),
-            ("_Grid", "grid"),
-            ("_Dots", "dots"),
-        ] {
-            paper_menu.append(Some(label), Some(&format!("pages.paper::{kind}")));
-        }
-        // Detailed names ("pages.move::1") set the action's target too.
-        let button = |icon: &str, tooltip: &str, action: &str| {
-            let button = gtk::Button::builder()
-                .icon_name(icon)
-                .tooltip_text(tooltip)
-                .build();
-            button.set_detailed_action_name(action);
-            button
-        };
-        let bar = gtk::CenterBox::new();
-        let left = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        left.append(
-            &gtk::MenuButton::builder()
-                .icon_name("cera-page-add-symbolic")
-                .tooltip_text("Insert page")
-                .menu_model(&insert_menu)
-                .build(),
-        );
-        left.append(
-            &gtk::MenuButton::builder()
-                .icon_name("view-grid-symbolic")
-                .tooltip_text("Paper")
-                .menu_model(&paper_menu)
-                .build(),
-        );
-        let middle = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        middle.append(&button(
-            "go-previous-symbolic",
-            "Move earlier",
-            "pages.move::-1",
-        ));
-        middle.append(&button("go-next-symbolic", "Move later", "pages.move::1"));
-        let delete = button("user-trash-symbolic", "Delete page", "pages.delete");
-        delete.add_css_class("destructive-action");
-        bar.set_start_widget(Some(&left));
-        bar.set_center_widget(Some(&middle));
-        bar.set_end_widget(Some(&delete));
-        bar.set_margin_top(6);
-        bar.set_margin_bottom(6);
-        bar.set_margin_start(6);
-        bar.set_margin_end(6);
-
-        let view = adw::ToolbarView::new();
-        view.add_top_bar(&header);
-        view.add_bottom_bar(&bar);
-        view.set_content(Some(&scroller));
-        let dialog = adw::Dialog::builder()
-            .title("Pages")
-            .content_width(720)
-            .content_height(640)
-            .child(&view)
-            .build();
-        dialog.insert_action_group("pages", Some(&self.actions()));
-
-        let go_to = glib::clone!(
-            #[weak(rename_to = sorter)]
-            self,
-            #[weak]
-            dialog,
-            move || {
-                if let Some(index) = sorter.selected() {
-                    sorter.canvas.show_page(index);
-                }
-                dialog.close();
-            }
-        );
-        let go_to = Rc::new(go_to);
-        go.connect_clicked(glib::clone!(
-            #[strong]
-            go_to,
-            move |_| go_to()
-        ));
-        grid.connect_activate(move |_, _| go_to());
-        dialog
+        factory
     }
 
-    fn actions(self: &Rc<Self>) -> gio::SimpleActionGroup {
-        let group = gio::SimpleActionGroup::new();
-        let insert = gio::SimpleAction::new("insert", Some(glib::VariantTy::STRING));
-        insert.connect_activate(glib::clone!(
-            #[weak(rename_to = sorter)]
-            self,
-            move |_, param| {
-                let after = param.and_then(|p| p.get::<String>()).as_deref() == Some("after");
-                sorter.insert(after);
-            }
-        ));
-        let paper = gio::SimpleAction::new("paper", Some(glib::VariantTy::STRING));
-        paper.connect_activate(glib::clone!(
-            #[weak(rename_to = sorter)]
-            self,
-            move |_, param| {
-                let kind = match param.and_then(|p| p.get::<String>()).as_deref() {
-                    Some("ruled") => PaperKind::Ruled,
-                    Some("grid") => PaperKind::Grid,
-                    Some("dots") => PaperKind::Dots,
-                    _ => PaperKind::Blank,
-                };
-                sorter.set_paper(kind);
-            }
-        ));
-        let move_page = gio::SimpleAction::new("move", Some(glib::VariantTy::STRING));
-        move_page.connect_activate(glib::clone!(
-            #[weak(rename_to = sorter)]
-            self,
-            move |_, param| {
-                let by = param
-                    .and_then(|p| p.get::<String>())
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(0);
-                sorter.move_by(by);
-            }
-        ));
-        let delete = gio::SimpleAction::new("delete", None);
-        delete.connect_activate(glib::clone!(
-            #[weak(rename_to = sorter)]
-            self,
-            move |_, _| sorter.delete()
-        ));
-        for action in [&insert, &paper, &move_page, &delete] {
-            group.add_action(action);
-        }
-        let update = glib::clone!(
-            #[weak(rename_to = sorter)]
-            self,
-            #[weak]
-            move_page,
-            #[weak]
-            delete,
-            move || {
-                let count = sorter.store.n_items() as usize;
-                let selected = sorter.selected();
-                delete.set_enabled(selected.is_some() && count > 1);
-                move_page.set_enabled(selected.is_some() && count > 1);
-            }
-        );
-        update();
-        self.selection.connect_selected_notify(move |_| update());
-        group
-    }
-
-    fn is_bookmarked(&self, index: usize) -> bool {
-        self.note
-            .borrow()
-            .doc
-            .page(index)
-            .is_ok_and(|p| p.bookmark().is_some())
+    fn is_bookmarked(&self, id: PageId) -> bool {
+        let note = self.note.borrow();
+        note.doc
+            .page_index(id)
+            .and_then(|i| note.doc.page(i).ok())
+            .is_some_and(|p| p.bookmark().is_some())
     }
 
     fn selected(&self) -> Option<usize> {
@@ -391,21 +512,85 @@ impl Sorter {
         (i != gtk::INVALID_LIST_POSITION).then_some(i as usize)
     }
 
-    /// Fills the grid from the note and selects `select`.
-    fn reload(&self, select: Option<u32>) {
-        let items: Vec<glib::BoxedAnyObject> = self
+    /// Selects `index` without moving the note.
+    fn select_quietly(&self, index: u32) {
+        self.syncing.set(true);
+        self.selection
+            .set_selected(index.min(self.store.n_items().saturating_sub(1)));
+        self.syncing.set(false);
+    }
+
+    /// The selection follows the note's current page, scrolled into view.
+    fn follow_page(&self, initial: bool) {
+        if self.syncing.get() {
+            return;
+        }
+        let page = self.canvas.current_page();
+        if !initial && self.selected() == Some(page as usize) {
+            return;
+        }
+        self.select_quietly(page);
+        if let Some(grid) = self
+            .canvas
+            .root()
+            .and_downcast::<CeraWindow>()
+            .and_then(|w| w.imp().pages.get().map(|p| p.grid.clone()))
+            && page < self.store.n_items()
+        {
+            grid.scroll_to(page, gtk::ListScrollFlags::NONE, None);
+        }
+    }
+
+    /// Fills the grid from the note, if its pages changed, and selects the current page.
+    fn reload(&self) {
+        let ids: Vec<PageId> = self
             .note
             .borrow()
             .doc
             .pages()
             .iter()
-            .map(|p| glib::BoxedAnyObject::new(p.id()))
+            .map(|p| p.id())
             .collect();
-        self.store.splice(0, self.store.n_items(), &items);
-        if let Some(i) = select {
-            self.selection
-                .set_selected(i.min(self.store.n_items().saturating_sub(1)));
+        let same = ids.len() == self.store.n_items() as usize
+            && ids.iter().enumerate().all(|(i, id)| {
+                self.store
+                    .item(i as u32)
+                    .and_downcast::<glib::BoxedAnyObject>()
+                    .is_some_and(|b| *b.borrow::<PageId>() == *id)
+            });
+        if !same {
+            let items: Vec<glib::BoxedAnyObject> =
+                ids.into_iter().map(glib::BoxedAnyObject::new).collect();
+            self.syncing.set(true);
+            self.store.splice(0, self.store.n_items(), &items);
+            self.syncing.set(false);
         }
+        self.select_quietly(self.canvas.current_page());
+    }
+
+    /// After an edit: once editing pauses, the page list, bookmarks and stale thumbnails.
+    fn refresh_soon(&self) {
+        if let Some(source) = self.refresh.take() {
+            source.remove();
+        }
+        let me = self.me.clone();
+        let source = glib::timeout_add_local_once(REFRESH_DELAY, move || {
+            let Some(sorter) = me.upgrade() else { return };
+            sorter.refresh.take();
+            sorter.reload();
+            for (&id, cell) in sorter.bound.borrow().iter() {
+                cell.mark.set_visible(sorter.is_bookmarked(id));
+            }
+            sorter.send_jobs();
+        });
+        *self.refresh.borrow_mut() = Some(source);
+    }
+
+    /// The page's ink generation and spec now.
+    fn version(&self, index: usize) -> Option<Version> {
+        let note = self.note.borrow();
+        let page = note.doc.page(index).ok()?;
+        Some((self.canvas.ink_generation(page.id()), *page.spec()))
     }
 
     fn insert(&self, after: bool) {
@@ -418,7 +603,8 @@ impl Sorter {
             history.insert_page(doc, at, spec)
         });
         if done.is_some() {
-            self.reload(Some(at as u32));
+            self.reload();
+            self.selection.set_selected(at as u32);
         }
     }
 
@@ -432,8 +618,10 @@ impl Sorter {
             history.remove_page(doc, index)
         });
         if done.is_some() {
+            self.reload();
             // The page that took its place, or the new last page.
-            self.reload(Some(index as u32));
+            self.selection
+                .set_selected((index as u32).min(self.store.n_items().saturating_sub(1)));
         }
     }
 
@@ -449,17 +637,17 @@ impl Sorter {
             history.move_page(doc, index, to)
         });
         if done.is_some() {
-            self.reload(Some(to as u32));
+            self.reload();
+            self.selection.set_selected(to as u32);
         }
     }
 
     fn set_paper(&self, kind: PaperKind) {
         let Some(index) = self.selected() else { return };
         let defaults = self.paper;
-        let id = self.canvas.edit_pages(|note| {
+        let done = self.canvas.edit_pages(|note| {
             let crate::note::Note { history, doc, .. } = note;
-            let page = doc.page(index)?;
-            let (id, old) = (page.id(), *page.spec());
+            let old = *doc.page(index)?.spec();
             let paper = Paper {
                 kind,
                 spacing: if old.paper.spacing > 0.0 {
@@ -474,16 +662,15 @@ impl Sorter {
                 },
                 fill: old.paper.fill,
             };
-            history.set_page_spec(doc, index, PageSpec { paper, ..old })?;
-            Ok(id)
+            history.set_page_spec(doc, index, PageSpec { paper, ..old })
         });
-        if let Some(id) = id {
-            self.forget_thumbnail(id);
-            self.reload(Some(index as u32));
+        if done.is_some() {
+            // The thumbnail is stale now (its spec changed); draw it at once.
+            self.send_jobs();
         }
     }
 
-    fn bind(&self, id: PageId, picture: &gtk::Picture) {
+    fn bind(&self, id: PageId, cell: BoundCell) {
         let size = {
             let note = self.note.borrow();
             note.doc
@@ -493,19 +680,18 @@ impl Sorter {
         };
         if let Some((w, h)) = size {
             let height = THUMB_WIDTH * f64::from(h) / f64::from(w.max(1.0));
-            picture.set_size_request(THUMB_WIDTH as i32, height.round() as i32);
+            cell.picture
+                .set_size_request(THUMB_WIDTH as i32, height.round() as i32);
         }
         match self.thumbs.borrow().get(&id) {
-            Some((texture, _)) => picture.set_paintable(Some(texture)),
-            None => picture.set_paintable(None::<&gdk::Paintable>),
+            Some((texture, ..)) => cell.picture.set_paintable(Some(texture)),
+            None => cell.picture.set_paintable(None::<&gdk::Paintable>),
         }
-        self.bound.borrow_mut().insert(id, picture.clone());
-        if !self.thumbs.borrow().contains_key(&id) {
-            self.request_soon();
-        }
+        self.bound.borrow_mut().insert(id, cell);
+        self.request_soon();
     }
 
-    /// Asks for the missing thumbnails of the cells on screen once binding settles.
+    /// Asks for the missing or stale thumbnails of the cells on screen once binding settles.
     fn request_soon(&self) {
         if self.requested.replace(true) {
             return;
@@ -520,23 +706,32 @@ impl Sorter {
     }
 
     fn send_jobs(&self) {
-        let wanted: Vec<PageId> = self
-            .bound
-            .borrow()
-            .keys()
-            .copied()
-            .filter(|id| !self.thumbs.borrow().contains_key(id))
-            .collect();
+        let bound: Vec<PageId> = self.bound.borrow().keys().copied().collect();
         let mut jobs = Vec::new();
-        let mut note = self.note.borrow_mut();
-        for id in wanted {
-            let Some(index) = note.doc.page_index(id) else {
+        let mut pending = HashMap::new();
+        for id in bound {
+            let Some(index) = self.note.borrow().doc.page_index(id) else {
                 continue;
             };
-            let Ok(spec) = note.doc.page(index).map(|p| *p.spec()) else {
+            let Some(version) = self.version(index) else {
                 continue;
             };
-            let Ok(strokes) = note.doc.load_ink(index) else {
+            let fresh = self
+                .thumbs
+                .borrow()
+                .get(&id)
+                .is_some_and(|(.., v)| *v == version);
+            if fresh {
+                continue;
+            }
+            let spec = version.1;
+            let Ok(strokes) = self
+                .note
+                .borrow_mut()
+                .doc
+                .load_ink(index)
+                .map(<[_]>::to_vec)
+            else {
                 continue;
             };
             // Small enough to be one tile.
@@ -552,20 +747,29 @@ impl Sorter {
                     ty: 0,
                 },
                 page_size: (spec.width, spec.height),
-                generation: 0,
-                source: JobSource::Page {
-                    spec,
-                    strokes: strokes.to_vec(),
-                },
+                generation: version.0,
+                source: JobSource::Page { spec, strokes },
             });
+            pending.insert(id, version);
         }
-        drop(note);
+        *self.pending.borrow_mut() = pending;
         self.renderer.set_jobs(self.doc, jobs);
     }
 
     fn thumbnail_ready(&self, result: TileResult) {
         let Ok(p) = result.pixels else { return };
         let id = result.key.page;
+        // Drawn from what was last asked for, or an older request that was overtaken.
+        let Some(version) = self
+            .pending
+            .borrow()
+            .get(&id)
+            .copied()
+            .filter(|v| v.0 == result.generation)
+        else {
+            return;
+        };
+        self.pending.borrow_mut().remove(&id);
         let texture: gdk::Texture = gdk::MemoryTexture::new(
             p.width as i32,
             p.height as i32,
@@ -578,7 +782,7 @@ impl Sorter {
         self.forget_thumbnail(id);
         self.thumbs
             .borrow_mut()
-            .insert(id, (texture.clone(), bytes));
+            .insert(id, (texture.clone(), bytes, version));
         self.lru.borrow_mut().push_back(id);
         self.thumb_bytes.set(self.thumb_bytes.get() + bytes);
         // Evict the oldest thumbnails that are not on screen.
@@ -593,15 +797,21 @@ impl Sorter {
                 None => break,
             }
         }
-        if let Some(picture) = self.bound.borrow().get(&id) {
-            picture.set_paintable(Some(&texture));
+        if let Some(cell) = self.bound.borrow().get(&id) {
+            cell.picture.set_paintable(Some(&texture));
         }
     }
 
     fn forget_thumbnail(&self, id: PageId) {
-        if let Some((_, bytes)) = self.thumbs.borrow_mut().remove(&id) {
+        if let Some((_, bytes, _)) = self.thumbs.borrow_mut().remove(&id) {
             self.thumb_bytes.set(self.thumb_bytes.get() - bytes);
             self.lru.borrow_mut().retain(|&v| v != id);
         }
     }
+}
+
+fn page_of(item: &gtk::ListItem) -> Option<PageId> {
+    item.item()
+        .and_downcast::<glib::BoxedAnyObject>()
+        .map(|b| *b.borrow::<PageId>())
 }

@@ -21,7 +21,7 @@ Every add-on waits on the add-on system.
 
 ## Adjustments
 
-- [ ] Move the page sorter from its dialog into the sidebar — D2
+- [x] Move the page sorter from its dialog into the sidebar — D2
 
 ## Core features
 

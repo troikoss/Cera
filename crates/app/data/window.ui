@@ -21,7 +21,18 @@
         <property name="child">
           <object class="AdwOverlaySplitView" id="split_view">
             <property name="sidebar">
-              <object class="CeraSidebar" id="sidebar"/>
+              <!-- The vault's files, or the current note's pages (added in pages.rs). -->
+              <object class="GtkStack" id="sidebar_stack">
+                <property name="transition-type">crossfade</property>
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">files</property>
+                    <property name="child">
+                      <object class="CeraSidebar" id="sidebar"/>
+                    </property>
+                  </object>
+                </child>
+              </object>
             </property>
             <property name="content">
               <object class="AdwToolbarView">
@@ -52,7 +63,7 @@
                       </object>
                     </child>
                     <child type="end">
-                      <object class="GtkButton">
+                      <object class="GtkToggleButton">
                         <property name="icon-name">view-grid-symbolic</property>
                         <property name="tooltip-text" translatable="yes">Pages</property>
                         <property name="action-name">win.pages</property>

@@ -330,10 +330,15 @@ Widget tree. Main window: vault tree on the left; header bar with title and page
 AdwApplicationWindow
 └─ AdwToastOverlay
    └─ AdwOverlaySplitView                  (AdwBreakpoint < 600sp → sidebar overlays)
-      ├─ sidebar: AdwToolbarView
-      │  ├─ top: AdwHeaderBar [vault menu ▾] [+ menu: Note, Folder, Import PDF…] [search]
-      │  │       GtkSearchBar
-      │  └─ GtkScrolledWindow > GtkListView (vault tree)
+      ├─ sidebar: GtkStack
+      │  ├─ files: AdwToolbarView
+      │  │  ├─ top: AdwHeaderBar [vault menu ▾] [+ menu: Note, Folder, Import PDF…] [search]
+      │  │  │       GtkSearchBar
+      │  │  └─ GtkScrolledWindow > GtkListView (vault tree)
+      │  └─ pages: AdwToolbarView
+      │     ├─ top: AdwHeaderBar [back to files] "Pages"
+      │     ├─ GtkScrolledWindow > GtkGridView (page thumbnails)
+      │     └─ bottom: [insert ▾] [paper ▾] [earlier] [later] [delete]
       └─ content: AdwToolbarView
          ├─ top: AdwHeaderBar [sidebar] AdwWindowTitle("Lecture 03", "Page 2 of 18")
          │                    [add page] [pages] [bookmarks] [menu]
@@ -367,10 +372,16 @@ AdwApplicationWindow
   and redraws the selection's texture once. Tool settings and slots are app settings
   (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.
-- **Pages button:** `AdwDialog` (a bottom sheet when narrow) with a `GtkGridView` of page
-  thumbnails: move earlier/later, insert blank before/after, delete, change paper. Thumbnails
-  are whole-page render jobs (`Layer::Page`) under their own document id, asked for only for
-  the cells on screen and kept in a 16 MiB LRU while the dialog is open.
+- **Pages button** (a toggle, also Ctrl+P; `window/pages.rs`): switches the sidebar between
+  the vault's files and the current note's pages, opening the sidebar if it is hidden. The
+  pages view is a `GtkGridView` of page thumbnails: tapping one shows that page, and the
+  selection follows the note as it scrolls; below it, move earlier/later, insert blank
+  before/after, delete and change paper act on the selected page. Thumbnails are whole-page
+  render jobs (`Layer::Page`) under their own document id, asked for only for the cells on
+  screen and kept in a 16 MiB LRU. Each remembers the page's ink generation (the canvas's
+  per-page edit counter) and spec it was drawn from; 400 ms after the last edit the stale
+  ones on screen are drawn again, keeping the old picture until then. The sorter follows the
+  selected tab, and drops its thumbnails when the pages view or the sidebar is hidden.
 - **Bookmarks button** (`window/bookmarks.rs`): a menu built each time it opens: "Bookmark
   this page" (a check, also Ctrl+D) and the bookmarked pages, a tap jumps there. The button
   turns accent-coloured on a bookmarked page; the page sorter marks bookmarked thumbnails.
