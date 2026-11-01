@@ -378,7 +378,7 @@ impl CeraWindow {
         }
     }
 
-    /// Free loop, rectangle or stroke.
+    /// Free loop, rectangle, stroke or add space.
     fn show_select_shape(&self) {
         let content = popover_box(gtk::Orientation::Horizontal);
         content.set_spacing(6);
@@ -388,6 +388,7 @@ impl CeraWindow {
             SelectShape::Lasso,
             SelectShape::Rectangle,
             SelectShape::Stroke,
+            SelectShape::Space,
         ] {
             let (icon, label, _) = select_shape_info(shape);
             let button = gtk::ToggleButton::builder()
@@ -808,6 +809,7 @@ fn select_shape_info(shape: SelectShape) -> (&'static str, &'static str, &'stati
             "_Stroke",
             "Stroke select (L)",
         ),
+        SelectShape::Space => ("cera-add-space-symbolic", "_Add Space", "Add space (L)"),
     }
 }
 

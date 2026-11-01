@@ -34,8 +34,10 @@ Every add-on waits on the add-on system.
         back — D1 (in the context menu; Ctrl+] / Ctrl+[)
 - [ ] Text tool — D4 (element model, Pango in the render worker, on-screen keyboard)
 - [ ] Shape tool — D3 if shapes are saved as plain strokes, D4 as editable objects
-- [ ] Add-space tool: insert or remove vertical space, standalone or as a selection mode — D2
-      (D3 if ink pushed off the page spills onto the next one)
+- [x] Add-space tool: insert or remove vertical space, standalone or as a selection mode — D2
+      (D3 if ink pushed off the page spills onto the next one). Done as a lasso mode; ink
+      stops at the page's bottom edge
+  - [ ] Spill ink pushed off the page onto the next one — D3
 - [x] More selection tools: rectangle select, pen (stroke-touch) select, next to the lasso —
       D1 rectangle, D2 pen
   - [x] Rectangle select (a lasso mode: tap the active lasso)

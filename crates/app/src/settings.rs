@@ -83,6 +83,8 @@ pub enum SelectShape {
     Rectangle,
     /// Strokes the drag passes over, or the one tapped.
     Stroke,
+    /// Everything below the press, dragged up or down to remove or insert space.
+    Space,
 }
 
 impl Default for Settings {
@@ -193,13 +195,21 @@ mod tests {
 
     #[test]
     fn select_shape_round_trips() {
-        let s = Settings {
-            select_shape: SelectShape::Stroke,
-            ..Settings::default()
-        };
-        let json = serde_json::to_string(&s).unwrap();
-        assert!(json.contains(r#""select_shape":"stroke""#), "{json}");
-        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), s);
+        for (shape, name) in [
+            (SelectShape::Stroke, "stroke"),
+            (SelectShape::Space, "space"),
+        ] {
+            let s = Settings {
+                select_shape: shape,
+                ..Settings::default()
+            };
+            let json = serde_json::to_string(&s).unwrap();
+            assert!(
+                json.contains(&format!(r#""select_shape":"{name}""#)),
+                "{json}"
+            );
+            assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), s);
+        }
     }
 
     #[test]

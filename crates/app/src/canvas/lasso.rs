@@ -4,6 +4,10 @@
 //! tap one) to select what the pen touches; then drag to move them, or delete, recolour,
 //! reorder, cut, copy and paste (also into other notes).
 //!
+//! In add-space mode a press takes every stroke that starts below it on that page, and the
+//! drag moves them straight down (inserting space) or up (removing it), kept on the page;
+//! they are deselected on release.
+//!
 //! The context menu with those actions (shown by the window, at the press, with any tool)
 //! opens differently per input: the mouse right-clicks anywhere; the stylus, or a drawing
 //! finger, holds still anywhere or taps the selection; a finger that pans holds still, or
@@ -103,6 +107,9 @@ pub(super) struct Selection {
     /// Where the current drag started (page points).
     drag_from: Option<(f32, f32)>,
     texture: Option<InkTexture>,
+    /// Made by add space: the line pressed on (page y) and the page height, which bound a
+    /// vertical-only drag.
+    space: Option<(f32, f32)>,
 }
 
 /// Deselected strokes shown from their texture until the tiles under them include them.
@@ -176,10 +183,15 @@ impl Canvas {
                 area.contains(p).then(|| s.drag_from = Some(p))
             })
         };
-        if grab.is_some() {
+        let shape = self.tools().select_shape.get();
+        if grab.is_some() && shape != SelectShape::Space {
             return;
         }
         self.clear_selection();
+        if shape == SelectShape::Space {
+            self.space_begin(x, y);
+            return;
+        }
         if let Some((index, page, p)) = self.page_point(x, y) {
             *imp.lasso.borrow_mut() = Some(LassoPath {
                 page,
@@ -198,7 +210,15 @@ impl Canvas {
             && let Some(from) = sel.drag_from
         {
             if let Some(p) = self.point_on(sel.page, x, y) {
-                sel.offset = (p.0 - from.0, p.1 - from.1);
+                sel.offset = match sel.space {
+                    // Kept on the page: no higher than the line, no lower than the bottom.
+                    Some((line, height)) => {
+                        let up = line - sel.bounds.y0;
+                        let down = (height - sel.bounds.y1).max(0.0);
+                        (0.0, (p.1 - from.1).clamp(up, down))
+                    }
+                    None => (p.0 - from.0, p.1 - from.1),
+                };
             }
         } else if let Some(path) = imp.lasso.borrow_mut().as_mut()
             && let Some(p) = self.point_on(path.page, x, y)
@@ -223,13 +243,18 @@ impl Canvas {
         let source = imp.input_source.get();
         let dragged = imp.selection.borrow_mut().as_mut().and_then(|s| {
             s.drag_from.take()?;
-            Some(std::mem::take(&mut s.offset))
+            Some((std::mem::take(&mut s.offset), s.space.is_some()))
         });
         let slop = (TAP_SLOP_PX / imp.zoom.get()) as f32;
-        if let Some(offset) = dragged {
-            if offset.0.hypot(offset.1) > slop {
+        if let Some((offset, space)) = dragged {
+            let moved = offset.0.hypot(offset.1) > slop;
+            if moved {
                 self.move_selection(offset);
-            } else if source != InputSource::Mouse {
+            }
+            if space {
+                // Add space leaves nothing selected; a tap does nothing.
+                self.clear_selection();
+            } else if !moved && source != InputSource::Mouse {
                 // Tapping the selection; the mouse right-clicks instead.
                 let (x, y) = imp.press.get();
                 self.context_menu_at(x, y, source);
@@ -328,11 +353,49 @@ impl Canvas {
         let imp = self.imp();
         self.cancel_hold();
         imp.lasso.take();
-        if let Some(s) = imp.selection.borrow_mut().as_mut() {
+        let space = imp.selection.borrow_mut().as_mut().is_some_and(|s| {
             s.drag_from = None;
             s.offset = (0.0, 0.0);
+            s.space.is_some()
+        });
+        if space {
+            self.clear_selection();
         }
         self.queue_draw();
+    }
+
+    /// Add space: selects every stroke that starts below the press and starts dragging them.
+    fn space_begin(&self, x: f64, y: f64) {
+        let Some((index, page, p)) = self.page_point(x, y) else {
+            return;
+        };
+        let Some(note) = self.note() else { return };
+        let indices: Vec<usize> = {
+            let mut note = note.borrow_mut();
+            let Ok(strokes) = note.doc.load_ink(index) else {
+                return;
+            };
+            strokes
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.bounds().y0 >= p.1)
+                .map(|(i, _)| i)
+                .collect()
+        };
+        tracing::debug!(below = indices.len(), "add space");
+        if indices.is_empty() {
+            return;
+        }
+        let height = {
+            let doc = self.imp().doc.borrow();
+            let Some(doc) = doc.as_ref() else { return };
+            doc.pages[index].1.height
+        };
+        self.select(page, indices);
+        if let Some(s) = self.imp().selection.borrow_mut().as_mut() {
+            s.space = Some((p.1, height));
+            s.drag_from = Some(p);
+        }
     }
 
     /// Selects the strokes with more than half of their points inside the loop.
@@ -428,6 +491,7 @@ impl Canvas {
             offset: (0.0, 0.0),
             drag_from: None,
             texture,
+            space: None,
         });
         self.invalidate_ink(page, bounds);
         self.request_tiles();
@@ -752,6 +816,26 @@ impl Canvas {
             let (dx, dy) = s.offset;
             if let Some(t) = &s.texture {
                 snapshot.append_texture(&t.texture, &to_view(t.rect.translated(dx, dy)));
+            }
+            if let Some((line, _)) = s.space {
+                // The space being added (or removed) as a band, and the line it follows.
+                let (a, b) = (line.min(line + dy), line.max(line + dy));
+                let y0 = page.y() + (f64::from(a) * zoom) as f32;
+                let y1 = page.y() + (f64::from(b) * zoom) as f32;
+                let mut band = accent();
+                band.set_alpha(0.12);
+                snapshot.append_color(
+                    &band,
+                    &graphene::Rect::new(page.x(), y0, page.width(), y1 - y0),
+                );
+                let y = page.y() + (f64::from(line + dy) * zoom) as f32;
+                let builder = gsk::PathBuilder::new();
+                builder.move_to(page.x(), y);
+                builder.line_to(page.x() + page.width(), y);
+                let stroke = gsk::Stroke::new(1.5);
+                stroke.set_dash(&[6.0, 4.0]);
+                snapshot.append_stroke(&builder.to_path(), &stroke, &accent());
+                return;
             }
             let frame = to_view(s.bounds.translated(dx, dy).expanded((4.0 / zoom) as f32));
             let builder = gsk::PathBuilder::new();
