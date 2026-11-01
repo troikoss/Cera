@@ -1,7 +1,6 @@
 # Cera
 
-Stylus-first handwritten notes for Linux tablets, in Rust with GTK 4 and libadwaita. Named
-after *cera*, the wax of Roman writing tablets.
+Stylus-first handwritten notes for Linux tablets, in Rust with GTK 4 and libadwaita.
 
 - Pressure-sensitive pen, highlighter, stroke eraser and lasso (move, recolour, cut, copy,
   paste between notes), with palm rejection and pinch zoom
