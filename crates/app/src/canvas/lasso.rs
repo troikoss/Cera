@@ -3,10 +3,10 @@
 //! on a page to select the strokes mostly inside it, then drag to move them, or delete,
 //! recolour, reorder, cut, copy and paste (also into other notes).
 //!
-//! The context menu with those actions (shown by the window) opens differently per input:
-//! the mouse right-clicks anywhere; the stylus, or a finger drawing with the lasso, taps the
-//! selection or holds still anywhere; a finger that pans holds still, or taps the selection
-//! (`touch.rs`). Opened away from the selection it offers Paste, which pastes there.
+//! The context menu with those actions (shown by the window, at the press, with any tool)
+//! opens differently per input: the mouse right-clicks anywhere; the stylus, or a drawing
+//! finger, holds still anywhere or taps the selection; a finger that pans holds still, or
+//! taps the selection (`touch.rs`). Opened away from the selection, Paste pastes there.
 //!
 //! While strokes are selected they are left out of the page's ink tiles and drawn from one
 //! texture, rendered once when the selection is made, so dragging costs nothing per frame
@@ -172,9 +172,6 @@ impl Canvas {
                 area.contains(p).then(|| s.drag_from = Some(p))
             })
         };
-        if self.imp().input_source.get() != InputSource::Mouse {
-            self.start_hold(x, y);
-        }
         if grab.is_some() {
             return;
         }
@@ -192,14 +189,6 @@ impl Canvas {
 
     pub(super) fn lasso_extend(&self, x: f64, y: f64) {
         let imp = self.imp();
-        let wandered = imp
-            .hold
-            .borrow()
-            .as_ref()
-            .is_some_and(|h| (x - h.start.0).hypot(y - h.start.1) > HOLD_SLOP_PX);
-        if wandered {
-            self.cancel_hold();
-        }
         let min_step = (MIN_STEP_PX / imp.zoom.get()) as f32;
         if let Some(sel) = imp.selection.borrow_mut().as_mut()
             && let Some(from) = sel.drag_from
@@ -236,11 +225,10 @@ impl Canvas {
         if let Some(offset) = dragged {
             if offset.0.hypot(offset.1) > slop {
                 self.move_selection(offset);
-            } else if source != InputSource::Mouse
-                && let Some(r) = self.selection_view_rect()
-            {
+            } else if source != InputSource::Mouse {
                 // Tapping the selection; the mouse right-clicks instead.
-                self.emit_context_menu(r, source, false);
+                let (x, y) = imp.press.get();
+                self.context_menu_at(x, y, source);
             }
             self.queue_draw();
             return;
@@ -274,27 +262,12 @@ impl Canvas {
         Some((x0, y0, x1 - x0, y1 - y0))
     }
 
-    /// Asks the window for the context menu, pointing at `(x, y, width, height)`; `point`
-    /// means away from the selection, where Paste would put the strokes.
-    pub(super) fn emit_context_menu(
-        &self,
-        (x, y, w, h): (f64, f64, f64, f64),
-        source: InputSource,
-        point: bool,
-    ) {
-        self.emit_by_name::<()>("context-menu", &[&x, &y, &w, &h, &(source as u32), &point]);
-    }
-
-    /// The context menu for a press at (`x`, `y`): the selection's if it is there (within
-    /// the grab margin), else the paper's.
+    /// Asks the window for the context menu at a press at (`x`, `y`), with any tool: the
+    /// selection's if it is there (within the grab margin), else the paper's, where Paste
+    /// would put the strokes.
     pub fn context_menu_at(&self, x: f64, y: f64, source: InputSource) {
-        match self
-            .selection_view_rect()
-            .filter(|_| self.on_selection(x, y))
-        {
-            Some(r) => self.emit_context_menu(r, source, false),
-            None => self.emit_context_menu((x, y, 1.0, 1.0), source, true),
-        }
+        let paper = !self.on_selection(x, y);
+        self.emit_by_name::<()>("context-menu", &[&x, &y, &(source as u32), &paper]);
     }
 
     /// Whether (`x`, `y`) is on the selection (within the grab margin).
@@ -306,20 +279,15 @@ impl Canvas {
     }
 
     /// Starts timing a press at (`x`, `y`); still there after `HOLD_TIME`, it opens the menu.
-    fn start_hold(&self, x: f64, y: f64) {
+    pub(super) fn start_hold(&self, x: f64, y: f64) {
         self.cancel_hold();
         let weak = self.downgrade();
         let timer = glib::timeout_add_local_once(HOLD_TIME, move || {
             let Some(canvas) = weak.upgrade() else { return };
             let imp = canvas.imp();
             let Some(hold) = imp.hold.take() else { return };
-            // The press becomes the hold: drop the loop or drag it started.
-            imp.lasso.take();
-            if let Some(s) = imp.selection.borrow_mut().as_mut() {
-                s.drag_from = None;
-                s.offset = (0.0, 0.0);
-            }
-            canvas.queue_draw();
+            // The press becomes the hold: drop the dot, loop or drag it started.
+            canvas.cancel();
             let (x, y) = hold.start;
             canvas.context_menu_at(x, y, imp.input_source.get());
         });
@@ -329,7 +297,20 @@ impl Canvas {
         });
     }
 
-    fn cancel_hold(&self) {
+    /// Stops timing the press once it moves more than `HOLD_SLOP_PX` from where it began.
+    pub(super) fn hold_moved(&self, x: f64, y: f64) {
+        let wandered = self
+            .imp()
+            .hold
+            .borrow()
+            .as_ref()
+            .is_some_and(|h| (x - h.start.0).hypot(y - h.start.1) > HOLD_SLOP_PX);
+        if wandered {
+            self.cancel_hold();
+        }
+    }
+
+    pub(super) fn cancel_hold(&self) {
         if let Some(h) = self.imp().hold.take() {
             h.timer.remove();
         }

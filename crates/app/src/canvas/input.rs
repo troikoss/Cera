@@ -300,7 +300,7 @@ impl Canvas {
         ));
         self.add_controller(mouse);
 
-        // A right click opens the context menu: at the selection if it is on it.
+        // A right click opens the context menu at the pointer, with any tool.
         let context = gtk::GestureClick::new();
         context.set_button(gdk::BUTTON_SECONDARY);
         context.connect_pressed(glib::clone!(
@@ -360,6 +360,11 @@ impl Canvas {
         let Some(note) = imp.note.borrow().clone() else {
             return;
         };
+        // With any tool, the stylus or a finger held still opens the context menu.
+        imp.press.set((s.x, s.y));
+        if imp.input_source.get() != super::InputSource::Mouse {
+            self.start_hold(s.x, s.y);
+        }
         if !eraser && self.tool() == ToolKind::Lasso {
             self.lasso_begin(s.x, s.y);
             return;
@@ -431,6 +436,9 @@ impl Canvas {
 
     fn extend(&self, samples: &[Sample]) {
         let imp = self.imp();
+        if let Some(s) = samples.last() {
+            self.hold_moved(s.x, s.y);
+        }
         if imp.erasing.get() {
             for &s in samples {
                 self.erase_at(s);
@@ -463,6 +471,7 @@ impl Canvas {
 
     fn end(&self) {
         let imp = self.imp();
+        self.cancel_hold();
         if imp.erasing.replace(false) {
             if let Some(note) = imp.note.borrow().as_ref() {
                 note.borrow_mut().history.end_group();
@@ -482,8 +491,9 @@ impl Canvas {
         self.commit(active);
     }
 
-    /// Drops what a touch started (a stroke, an erase, a loop) when it turns into a pinch.
-    fn cancel(&self) {
+    /// Drops what a press started (a stroke, an erase, a loop) when it turns into a pinch
+    /// or a hold.
+    pub(super) fn cancel(&self) {
         let imp = self.imp();
         if imp.erasing.replace(false) {
             if let Some(note) = imp.note.borrow().as_ref() {

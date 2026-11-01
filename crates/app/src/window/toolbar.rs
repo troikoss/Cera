@@ -535,23 +535,19 @@ impl CeraWindow {
 }
 
 impl CeraWindow {
-    /// The lasso's actions in a menu pointing at `rect` (canvas coordinates): cut, copy,
-    /// delete and arrange on the selection; paste with something to paste, at `rect` when it
-    /// is a `point` away from the selection. For the mouse it is a compact menu below the
-    /// pointer; for the stylus and fingers it sits above the selection or the press, out
-    /// from under the hand, with taller rows.
+    /// The canvas's context menu at the press `at` (canvas coordinates), with any tool: cut,
+    /// copy, delete and arrange on the selection; paste, at `at` when it is a `point` away
+    /// from the selection; undo and redo. For the mouse it is a compact menu below the
+    /// pointer; for the stylus and fingers it sits above the press, out from under the
+    /// hand, with taller rows.
     pub(super) fn show_context_menu(
         &self,
         canvas: &crate::canvas::Canvas,
-        rect: (f64, f64, f64, f64),
+        at: (f64, f64),
         source: InputSource,
         point: bool,
     ) {
         let selection = canvas.has_selection() && !point;
-        let paste = crate::canvas::has_clipboard();
-        if !selection && !paste {
-            return;
-        }
         self.update_note_actions();
         let menu = gio::Menu::new();
         let edit = gio::Menu::new();
@@ -559,17 +555,13 @@ impl CeraWindow {
             edit.append(Some("Cu_t"), Some("win.cut"));
             edit.append(Some("_Copy"), Some("win.copy"));
         }
-        if paste {
-            if point {
-                let item = gio::MenuItem::new(Some("_Paste"), None);
-                item.set_action_and_target_value(
-                    Some("win.paste-at"),
-                    Some(&(rect.0, rect.1).to_variant()),
-                );
-                edit.append_item(&item);
-            } else {
-                edit.append(Some("_Paste"), Some("win.paste"));
-            }
+        // Paste is always listed, greyed out with nothing to paste.
+        if point {
+            let item = gio::MenuItem::new(Some("_Paste"), None);
+            item.set_action_and_target_value(Some("win.paste-at"), Some(&at.to_variant()));
+            edit.append_item(&item);
+        } else {
+            edit.append(Some("_Paste"), Some("win.paste"));
         }
         if selection {
             edit.append(Some("_Delete"), Some("win.delete-selection"));
@@ -589,10 +581,14 @@ impl CeraWindow {
             }
             menu.append_section(None, &arrange);
         }
+        let history = gio::Menu::new();
+        history.append(Some("_Undo"), Some("win.undo"));
+        history.append(Some("_Redo"), Some("win.redo"));
+        menu.append_section(None, &history);
 
         let imp = self.imp();
         let anchor = &*imp.note_overlay;
-        let (x, y, w, h) = rect;
+        let (x, y) = at;
         let Some(origin) =
             canvas.compute_point(anchor, &gtk::graphene::Point::new(x as f32, y as f32))
         else {
@@ -611,14 +607,57 @@ impl CeraWindow {
         popover.set_pointing_to(Some(&gdk::Rectangle::new(
             origin.x() as i32,
             origin.y() as i32,
-            (w as i32).max(1),
-            (h as i32).max(1),
+            1,
+            1,
         )));
+        touch_scroll(&popover);
         popover.connect_closed(|m| {
             let m = m.clone();
             glib::idle_add_local_once(move || m.unparent());
         });
         popover.popup();
+    }
+}
+
+/// Lets a finger scroll the menu with GTK's own kinetic scrolling, starting on an item too.
+/// A menu item (`GtkModelButton`) claims a touch as soon as it is pressed, which cancels the
+/// scrolled window's drag; so each item's click gesture is turned off and replaced by one that
+/// activates on release and claims nothing. The scrolled window's drag then claims a touch
+/// that moves, which cancels the click.
+fn touch_scroll(popover: &gtk::PopoverMenu) {
+    let mut items = Vec::new();
+    menu_items(popover.upcast_ref(), &mut items);
+    for item in items {
+        let controllers = item.observe_controllers();
+        for c in (0..controllers.n_items()).filter_map(|i| controllers.item(i)) {
+            if let Ok(click) = c.downcast::<gtk::GestureClick>() {
+                click.set_propagation_phase(gtk::PropagationPhase::None);
+            }
+        }
+        let click = gtk::GestureClick::new();
+        click.set_button(gdk::BUTTON_PRIMARY);
+        click.connect_released(|g, _, x, y| {
+            if let Some(item) = g.widget()
+                && item.contains(x, y)
+            {
+                // A model button's activate signal is "clicked": runs and closes the menu.
+                item.activate();
+            }
+        });
+        item.add_controller(click);
+    }
+}
+
+/// The menu items (`GtkModelButton`s) inside `widget`.
+fn menu_items(widget: &gtk::Widget, out: &mut Vec<gtk::Widget>) {
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        if c.css_name() == "modelbutton" {
+            out.push(c.clone());
+        } else {
+            menu_items(&c, out);
+        }
+        child = c.next_sibling();
     }
 }
 

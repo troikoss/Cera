@@ -7,8 +7,8 @@
 //!   finger landing soon after the first turns a just-started stroke into a pinch.
 //!
 //! Without "draw with finger" touches pass through untouched: the scrolled window pans and
-//! the canvas's own pinch gesture zooms. A finger held still opens the lasso's context
-//! menu, and so does a tap on the selection. (Drawing with a finger, the canvas sees taps
+//! the canvas's own pinch gesture zooms. A finger held still opens the context menu
+//! (with any tool), and so does a tap on the selection. (Drawing with a finger, the canvas sees taps
 //! and holds itself, like the stylus's.)
 
 use std::cell::RefCell;

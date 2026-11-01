@@ -4,7 +4,8 @@
 //!
 //! A capture-phase controller on a parent of the scrolled window sees touches before the
 //! scrolled window's own pan gesture does. Whole touch sequences are kept or swallowed, never
-//! split, so no gesture is left half-started.
+//! split, so no gesture is left half-started. Touches on a popover (the context menu) are
+//! never swallowed.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -23,7 +24,23 @@ pub fn controller() -> gtk::EventControllerLegacy {
     let state = Rc::new(State::default());
     let controller = gtk::EventControllerLegacy::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-    controller.connect_event(move |_, event| {
+    controller.connect_event(move |c, event| {
+        // A popover on the note area (the context menu) is its own surface: its touches
+        // scroll and pick menu items even with the pen still hovering.
+        let own = c
+            .widget()
+            .and_then(|w| w.native())
+            .and_then(|n| n.surface());
+        let touch = matches!(
+            event.event_type(),
+            gdk::EventType::TouchBegin
+                | gdk::EventType::TouchUpdate
+                | gdk::EventType::TouchEnd
+                | gdk::EventType::TouchCancel
+        );
+        if touch && event.surface() != own {
+            return glib::Propagation::Proceed;
+        }
         if state.swallow(event) {
             glib::Propagation::Stop
         } else {

@@ -28,8 +28,8 @@ Every add-on waits on the add-on system.
 ### Canvas and tools
 
 - [ ] Context menu on the canvas (hold or right-click); home for actions that aren't tools,
-      such as linking — D2 (a hold must not fight drawing). Started: the lasso's actions open
-      from a mouse right-click, a stylus or finger tap on the selection, or a 500 ms hold
+      such as linking — D2 (a hold must not fight drawing). Started: with any tool it opens
+      from a mouse right-click, a 500 ms stylus or finger hold, or a tap on the selection
   - [x] Layer order for a selection: bring forward, send backward, bring to front, send to
         back — D1 (in the context menu; Ctrl+] / Ctrl+[)
 - [ ] Text tool — D4 (element model, Pango in the render worker, on-screen keyboard)

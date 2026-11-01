@@ -125,8 +125,10 @@ mod imp {
         pub(super) selection: RefCell<Option<lasso::Selection>>,
         /// What pressed last (stylus, mouse or finger), for the context menu.
         pub(super) input_source: Cell<lasso::InputSource>,
-        /// A lasso press that may turn into a hold.
+        /// A stylus or finger press that may turn into a hold.
         pub(super) hold: RefCell<Option<lasso::Hold>>,
+        /// Where the last press began (widget coordinates); the context menu opens there.
+        pub(super) press: Cell<(f64, f64)>,
         pub(super) ghosts: RefCell<Vec<lasso::Ghost>>,
         pub(super) erasing: Cell<bool>,
         /// The stroke this pen contact drew; a barrel press mid-stroke erases around it.
@@ -166,6 +168,7 @@ mod imp {
                 selection: RefCell::default(),
                 input_source: Cell::default(),
                 hold: RefCell::default(),
+                press: Cell::default(),
                 ghosts: RefCell::default(),
                 erasing: Cell::new(false),
                 drawn: RefCell::default(),
@@ -217,12 +220,10 @@ mod imp {
                     glib::subclass::Signal::builder("selection-changed").build(),
                     // Show the lasso's actions (a tap on the selection, a hold, a right
                     // click).
-                    // Params: x, y, width, height, `InputSource` as u32, and whether it
-                    // points away from the selection (where Paste would put the strokes).
+                    // Params: x, y (the press), `InputSource` as u32, and whether it is away
+                    // from the selection (where Paste would put the strokes).
                     glib::subclass::Signal::builder("context-menu")
                         .param_types([
-                            f64::static_type(),
-                            f64::static_type(),
                             f64::static_type(),
                             f64::static_type(),
                             u32::static_type(),

@@ -338,13 +338,18 @@ AdwApplicationWindow
   gradient nodes (`wheel.rs`); the selected size slot → width slider. How many swatches and
   size slots show is a preference. The eraser has size slots (radius in logical px, also used
   by the stylus's eraser end and barrel) and no swatches. With the lasso, the swatches recolour the selection; cut, copy,
-  paste, delete and arrange are in a context menu (`GtkPopoverMenu`, built per opening with
-  only the entries that apply). It opens per input: the **mouse** right-clicks anywhere (a
-  compact menu below the pointer; left clicks never open it); the **stylus**, or a finger
-  drawing with the lasso, taps the selection or holds still for 500 ms anywhere; a **finger**
-  that pans holds still, or taps the selection (`touch.rs`). Stylus and finger menus sit above
-  the selection or the press, out from under the hand, with 44 px rows. Opened away from the
-  selection the menu offers Paste, which pastes centred on that point. Tool settings and slots are app settings
+  paste, delete, arrange, undo and redo are in a context menu (`GtkPopoverMenu`, built per
+  opening; cut, copy, delete and arrange only on the selection, Paste greyed out with nothing
+  to paste). It opens with any tool, per input: the **mouse** right-clicks anywhere (a compact
+  menu below the pointer; left clicks never open it); the **stylus**, or a drawing finger,
+  holds still for 500 ms anywhere (the dot, loop or erase it began is dropped) or, with the
+  lasso, taps the selection; a **finger** that pans holds still, or taps the selection
+  (`touch.rs`). Stylus and finger menus sit just above the press, out from under the hand,
+  with 44 px rows, and scroll with a finger when taller than the screen, also from an
+  item: a `GtkModelButton` claims a touch on press, which cancels the scrolled window's
+  kinetic drag, so each item's click gesture is swapped for one that activates on release;
+  palm rejection leaves touches on popovers alone. Opened away from the selection, Paste pastes centred on
+  that point. Tool settings and slots are app settings
   (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.
 - **Pages button:** `AdwDialog` (a bottom sheet when narrow) with a `GtkGridView` of page
