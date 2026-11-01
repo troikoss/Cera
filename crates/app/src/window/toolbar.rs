@@ -729,7 +729,7 @@ impl CeraWindow {
 /// scrolled window's drag; so each item's click gesture is turned off and replaced by one that
 /// activates on release and claims nothing. The scrolled window's drag then claims a touch
 /// that moves, which cancels the click.
-fn touch_scroll(popover: &gtk::PopoverMenu) {
+pub(super) fn touch_scroll(popover: &gtk::PopoverMenu) {
     let mut items = Vec::new();
     menu_items(popover.upcast_ref(), &mut items);
     for item in items {

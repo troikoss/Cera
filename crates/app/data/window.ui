@@ -63,13 +63,6 @@
                       </object>
                     </child>
                     <child type="end">
-                      <object class="GtkToggleButton">
-                        <property name="icon-name">view-grid-symbolic</property>
-                        <property name="tooltip-text" translatable="yes">Pages</property>
-                        <property name="action-name">win.pages</property>
-                      </object>
-                    </child>
-                    <child type="end">
                       <object class="GtkButton">
                         <property name="icon-name">cera-page-add-symbolic</property>
                         <property name="tooltip-text" translatable="yes">Add page after this one</property>

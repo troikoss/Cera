@@ -568,8 +568,12 @@ impl Canvas {
 
     /// Bookmarks the current page, or removes its bookmark; saved like an edit, not undone.
     pub fn set_bookmarked(&self, bookmarked: bool) {
+        self.set_page_bookmarked(self.current_page() as usize, bookmarked);
+    }
+
+    /// Bookmarks page `index`, or removes its bookmark.
+    pub fn set_page_bookmarked(&self, index: usize, bookmarked: bool) {
         let Some(note) = self.note() else { return };
-        let index = self.current_page() as usize;
         let set = note
             .borrow_mut()
             .doc

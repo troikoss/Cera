@@ -332,7 +332,7 @@ AdwApplicationWindow
    └─ AdwOverlaySplitView                  (AdwBreakpoint < 600sp → sidebar overlays)
       ├─ sidebar: GtkStack
       │  ├─ files: AdwToolbarView
-      │  │  ├─ top: AdwHeaderBar [vault menu ▾] [+ menu: Note, Folder, Import PDF…] [search]
+      │  │  ├─ top: AdwHeaderBar [+ menu: Note, Folder, Import PDF…] [vault menu ▾] [pages] [search]
       │  │  │       GtkSearchBar
       │  │  └─ GtkScrolledWindow > GtkListView (vault tree)
       │  └─ pages: AdwToolbarView
@@ -341,7 +341,7 @@ AdwApplicationWindow
       │     └─ bottom: [insert ▾] [paper ▾] [earlier] [later] [delete]
       └─ content: AdwToolbarView
          ├─ top: AdwHeaderBar [sidebar] AdwWindowTitle("Lecture 03", "Page 2 of 18")
-         │                    [add page] [pages] [bookmarks] [menu]
+         │                    [add page] [bookmarks] [menu]
          │       AdwTabBar (autohide)
          └─ AdwTabView → per tab: GtkOverlay
             ├─ GtkScrolledWindow > Canvas
@@ -372,11 +372,14 @@ AdwApplicationWindow
   and redraws the selection's texture once. Tool settings and slots are app settings
   (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.
-- **Pages button** (a toggle, also Ctrl+P; `window/pages.rs`): switches the sidebar between
-  the vault's files and the current note's pages, opening the sidebar if it is hidden. The
-  pages view is a `GtkGridView` of page thumbnails: tapping one shows that page, and the
-  selection follows the note as it scrolls; below it, move earlier/later, insert blank
-  before/after, delete and change paper act on the selected page. Thumbnails are whole-page
+- **Pages** (`window/pages.rs`): the Pages button in the files' header (or Ctrl+P, which
+  also opens a hidden sidebar) switches the sidebar to the current note's pages; a back
+  button returns to the files. The pages view is a `GtkGridView` of page thumbnails: tapping
+  one shows that page, and the selection follows the note as it scrolls; below it, move
+  earlier/later, insert blank before/after, delete and change paper act on the selected page.
+  A right click or a hold on a thumbnail selects it and opens its context menu: insert
+  before/after, paper, move earlier/later, bookmark (or remove it) and delete; stylus and
+  finger menus sit above the press with tall rows, like the canvas's. Thumbnails are whole-page
   render jobs (`Layer::Page`) under their own document id, asked for only for the cells on
   screen and kept in a 16 MiB LRU. Each remembers the page's ink generation (the canvas's
   per-page edit counter) and spec it was drawn from; 400 ms after the last edit the stale

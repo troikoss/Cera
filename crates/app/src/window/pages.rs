@@ -3,8 +3,9 @@
 //! note to jump to, reorder, insert blank pages, delete them or change their paper. Every
 //! change goes through the note's history, so it undoes like any other edit.
 //!
-//! The header's Pages button (Ctrl+P) switches the sidebar between the vault's files and
-//! the pages. Tapping a thumbnail shows that page; scrolling the note moves the selection.
+//! The Pages button in the files' header (Ctrl+P) switches the sidebar to the pages, and a
+//! back button returns. Tapping a thumbnail shows that page; scrolling the note moves the
+//! selection. A right click or a hold on a thumbnail opens its context menu.
 //! The sorter is bound to the selected tab while the view is on screen and dropped, with its
 //! thumbnails, when the view is hidden or the sidebar closes.
 //!
@@ -324,6 +325,7 @@ impl CeraWindow {
             s.move_by(p.and_then(|p| p.parse::<i64>().ok()).unwrap_or(0))
         });
         with_sorter("delete", |s, _| s.delete());
+        with_sorter("bookmark", |s, _| s.toggle_bookmark());
         group
     }
 
@@ -341,6 +343,7 @@ impl CeraWindow {
             });
         for (name, enabled) in [
             ("insert", any),
+            ("bookmark", any),
             ("paper", any),
             ("move", any && several),
             ("delete", any && several),
@@ -467,6 +470,7 @@ impl Sorter {
             cell.append(&picture);
             cell.append(&caption);
             item.set_child(Some(&cell));
+            add_menu_gestures(item, &cell);
         });
         let weak = Rc::downgrade(self);
         factory.connect_bind(move |_, item| {
@@ -591,6 +595,24 @@ impl Sorter {
         let note = self.note.borrow();
         let page = note.doc.page(index).ok()?;
         Some((self.canvas.ink_generation(page.id()), *page.spec()))
+    }
+
+    fn selected_bookmarked(&self) -> bool {
+        let Some(index) = self.selected() else {
+            return false;
+        };
+        self.note
+            .borrow()
+            .doc
+            .page(index)
+            .is_ok_and(|p| p.bookmark().is_some())
+    }
+
+    fn toggle_bookmark(&self) {
+        if let Some(index) = self.selected() {
+            let on = !self.selected_bookmarked();
+            self.canvas.set_page_bookmarked(index, on);
+        }
     }
 
     fn insert(&self, after: bool) {
@@ -808,6 +830,113 @@ impl Sorter {
             self.lru.borrow_mut().retain(|&v| v != id);
         }
     }
+}
+
+/// A right click, or a hold of a finger or the stylus, on a thumbnail selects its page (which
+/// shows it) and opens the page's context menu there.
+fn add_menu_gestures(item: &gtk::ListItem, cell: &gtk::Box) {
+    let open = {
+        let item = item.downgrade();
+        let cell = cell.downgrade();
+        move |x: f64, y: f64, touch: bool| {
+            let (Some(item), Some(cell)) = (item.upgrade(), cell.upgrade()) else {
+                return;
+            };
+            let position = item.position();
+            if position == gtk::INVALID_LIST_POSITION {
+                return;
+            }
+            if let Some(grid) = cell
+                .ancestor(gtk::GridView::static_type())
+                .and_downcast::<gtk::GridView>()
+                && let Some(selection) = grid.model()
+            {
+                selection.select_item(position, true);
+            }
+            let bookmarked = cell
+                .root()
+                .and_downcast::<CeraWindow>()
+                .and_then(|w| w.imp().sorter.borrow().clone())
+                .is_some_and(|s| s.selected_bookmarked());
+            page_menu(&cell, x, y, touch, bookmarked);
+        }
+    };
+    let open = Rc::new(open);
+    let right = gtk::GestureClick::builder()
+        .button(gdk::BUTTON_SECONDARY)
+        .build();
+    right.connect_pressed(glib::clone!(
+        #[strong]
+        open,
+        move |g, _, x, y| {
+            g.set_state(gtk::EventSequenceState::Claimed);
+            open(x, y, false);
+        }
+    ));
+    cell.add_controller(right);
+    let hold = gtk::GestureLongPress::new();
+    hold.connect_pressed(move |g, x, y| {
+        let mouse = g
+            .current_event_device()
+            .is_none_or(|d| d.source() == gdk::InputSource::Mouse);
+        g.set_state(gtk::EventSequenceState::Claimed);
+        open(x, y, !mouse);
+    });
+    cell.add_controller(hold);
+}
+
+/// The page's actions: insert, paper, move, bookmark, delete. They act on the selected page,
+/// which is the one pressed.
+fn page_menu(cell: &gtk::Box, x: f64, y: f64, touch: bool, bookmarked: bool) {
+    let menu = gio::Menu::new();
+    let insert = gio::Menu::new();
+    insert.append(Some("Insert Page _Before"), Some("pages.insert::before"));
+    insert.append(Some("Insert Page _After"), Some("pages.insert::after"));
+    menu.append_section(None, &insert);
+    let paper = gio::Menu::new();
+    for (label, kind) in [
+        ("_Blank", "blank"),
+        ("_Ruled", "ruled"),
+        ("_Grid", "grid"),
+        ("_Dots", "dots"),
+    ] {
+        paper.append(Some(label), Some(&format!("pages.paper::{kind}")));
+    }
+    let arrange = gio::Menu::new();
+    arrange.append_submenu(Some("_Paper"), &paper);
+    arrange.append(Some("Move _Earlier"), Some("pages.move::-1"));
+    arrange.append(Some("Move _Later"), Some("pages.move::1"));
+    arrange.append(
+        Some(if bookmarked {
+            "Remove Book_mark"
+        } else {
+            "Book_mark"
+        }),
+        Some("pages.bookmark::"),
+    );
+    menu.append_section(None, &arrange);
+    let delete = gio::Menu::new();
+    delete.append(Some("_Delete Page"), Some("pages.delete::"));
+    menu.append_section(None, &delete);
+
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.set_parent(cell);
+    popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    if touch {
+        // Above the press, out from under the hand, with taller rows.
+        popover.set_position(gtk::PositionType::Top);
+        popover.add_css_class("touch-menu");
+    } else {
+        popover.set_position(gtk::PositionType::Bottom);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+    }
+    super::toolbar::touch_scroll(&popover);
+    popover.connect_closed(|m| {
+        let m = m.clone();
+        glib::idle_add_local_once(move || m.unparent());
+    });
+    popover.popup();
 }
 
 fn page_of(item: &gtk::ListItem) -> Option<PageId> {
