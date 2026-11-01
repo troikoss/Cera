@@ -249,6 +249,7 @@ impl CeraWindow {
                     ("Export as PDF", "<Control>e"),
                     ("Export page as PNG", "<Control><Shift>e"),
                     ("Add page", "<Control>Return"),
+                    ("Bookmark page", "<Control>d"),
                 ],
             ),
             (

@@ -230,7 +230,8 @@ One self-contained file per note. Append-only log so autosave is cheap and crash
 │   PageInk     encoding, page id, encoded strokes      │
 │   Thumbnail   (kind 2, reserved for M5)               │
 │   Manifest    page order, page specs, assets,         │
-│               location of each page's latest ink      │
+│               location of each page's latest ink,     │
+│               bookmarks                               │
 │   ... later chunks appended on each save ...          │
 ├─────────────────────────────────────────────────────┤
 │ Footer (32 B)  "CERAFOOT", generation, manifest       │  ← always at EOF
@@ -254,6 +255,10 @@ Code: `crates/core/src/format.rs` (layout), `codec.rs` (strokes), `file.rs` (ope
   history could bring back.
 - **Page spec:** size in pt, paper (blank / ruled / grid / dots + spacing, line and fill
   colour), optional `Pdf { asset, page }` background.
+- **Bookmarks** (manifest version 2; version 1 manifests still open, with none): a list of
+  `{ page id, name }` in page order, the name empty unless given. They belong to the page, so
+  they follow it when it moves and come back with it on undo, but toggling one is not itself
+  an undo step (like a bookmark in a book); it marks the layout dirty and saves like an edit.
 - **Stroke encoding:** tool, RGBA, base width, point count; points as zig-zag varint deltas in
   1/64 pt (the first from (0, 0), so absolute); pressure as u8. 3–5 bytes per point on disk.
   `Stroke::new` rounds to that precision, so a stroke is identical after save and reopen.
@@ -285,6 +290,7 @@ Code: `crates/render/src/export.rs`, `page.rs`. The main thread collects every p
 - **PDF:** one cairo `PdfSurface` page per note page at its own size: paper as rectangles,
   the background through Poppler's `render_for_printing`, ink as the same filled paths the
   tiles use. Everything stays vector. Ink costs ~35 bytes per sample after compression.
+  Bookmarked pages become the PDF's outline ("Page N", or the bookmark's name).
 - **PNG:** the current page at 3 px/pt (216 dpi).
 - Both write a hidden temp file next to the target and rename it over, so a failed export
   leaves nothing half-written.
@@ -327,7 +333,7 @@ AdwApplicationWindow
       │  └─ GtkScrolledWindow > GtkListView (vault tree)
       └─ content: AdwToolbarView
          ├─ top: AdwHeaderBar [sidebar] AdwWindowTitle("Lecture 03", "Page 2 of 18")
-         │                    [undo] [redo] [pages] [menu]
+         │                    [add page] [pages] [bookmarks] [menu]
          │       AdwTabBar (autohide)
          └─ AdwTabView → per tab: GtkOverlay
             ├─ GtkScrolledWindow > Canvas
@@ -359,6 +365,9 @@ AdwApplicationWindow
   thumbnails: move earlier/later, insert blank before/after, delete, change paper. Thumbnails
   are whole-page render jobs (`Layer::Page`) under their own document id, asked for only for
   the cells on screen and kept in a 16 MiB LRU while the dialog is open.
+- **Bookmarks button** (`window/bookmarks.rs`): a menu built each time it opens: "Bookmark
+  this page" (a check, also Ctrl+D) and the bookmarked pages, a tap jumps there. The button
+  turns accent-coloured on a bookmarked page; the page sorter marks bookmarked thumbnails.
 - **Import:** drop a PDF on the sidebar/window or use + → Import PDF… → `AdwDialog` with
   `AdwEntryRow` (name), `AdwComboRow` (folder), page range, keep original.
 - **No vault open:** `AdwStatusPage` "Open a vault" with "Open folder" / "Create vault" and a
@@ -367,7 +376,8 @@ AdwApplicationWindow
 - **Dark mode:** UI follows `AdwStyleManager`; paper stays white by default (dark paper is a
   later option).
 - **Keyboard:** Ctrl+Z / Ctrl+Shift+Z, P / H / E / L for tools, Ctrl+± and Ctrl+0 (fit width),
-  F9 sidebar, Ctrl+X/C/V and Delete for the selection, Ctrl+P pages; Ctrl+? lists them all.
+  F9 sidebar, Ctrl+X/C/V and Delete for the selection, Ctrl+P pages, Ctrl+D bookmark the page;
+  Ctrl+? lists them all.
   Keys that text fields also use are bubble-phase window shortcuts, not app accelerators.
 - Touch targets ≥ 40 px in the tool bar.
 

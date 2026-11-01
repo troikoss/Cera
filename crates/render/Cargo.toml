@@ -9,7 +9,7 @@ publish.workspace = true
 [dependencies]
 cera-core.workspace = true
 # PDF and PNG surfaces for export.
-cairo = { workspace = true, features = ["pdf", "png"] }
+cairo = { workspace = true, features = ["pdf", "png", "v1_16"] }
 async-channel.workspace = true
 tracing.workspace = true
 glib.workspace = true

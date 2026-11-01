@@ -145,6 +145,17 @@ impl Sorter {
                 .css_classes(["page-thumb"])
                 .build();
             let label = gtk::Label::builder().css_classes(["caption"]).build();
+            let mark = gtk::Image::builder()
+                .icon_name("user-bookmarks-symbolic")
+                .tooltip_text("Bookmarked")
+                .css_classes(["bookmarked"])
+                .build();
+            let caption = gtk::Box::builder()
+                .spacing(4)
+                .halign(gtk::Align::Center)
+                .build();
+            caption.append(&label);
+            caption.append(&mark);
             let cell = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
                 .spacing(6)
@@ -152,7 +163,7 @@ impl Sorter {
                 .margin_bottom(6)
                 .build();
             cell.append(&picture);
-            cell.append(&label);
+            cell.append(&caption);
             item.set_child(Some(&cell));
         });
         let weak = Rc::downgrade(self);
@@ -171,11 +182,15 @@ impl Sorter {
                 .first_child()
                 .and_downcast::<gtk::Picture>()
                 .expect("picture");
-            let label = picture
-                .next_sibling()
+            let caption = picture.next_sibling().expect("caption");
+            let label = caption
+                .first_child()
                 .and_downcast::<gtk::Label>()
                 .expect("label");
             label.set_label(&(item.position() + 1).to_string());
+            if let Some(mark) = label.next_sibling() {
+                mark.set_visible(sorter.is_bookmarked(item.position() as usize));
+            }
             sorter.bind(id, &picture);
         });
         let weak = Rc::downgrade(self);
@@ -361,6 +376,14 @@ impl Sorter {
         update();
         self.selection.connect_selected_notify(move |_| update());
         group
+    }
+
+    fn is_bookmarked(&self, index: usize) -> bool {
+        self.note
+            .borrow()
+            .doc
+            .page(index)
+            .is_ok_and(|p| p.bookmark().is_some())
     }
 
     fn selected(&self) -> Option<usize> {

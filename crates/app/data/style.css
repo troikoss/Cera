@@ -75,3 +75,8 @@ gridview > child:selected picture.page-thumb {
   outline: 3px solid var(--accent-bg-color);
   outline-offset: 2px;
 }
+
+/* The header's bookmark button while the current page is bookmarked. */
+.bookmarked {
+  color: var(--accent-color);
+}

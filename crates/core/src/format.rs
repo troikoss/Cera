@@ -21,8 +21,9 @@ use crate::model::{AssetId, Background, PageId, PageSpec};
 
 /// Version of the container layout in the header.
 pub const FORMAT_VERSION: u32 = 1;
-/// Version of the manifest encoding, its first field.
-pub(crate) const MANIFEST_VERSION: u32 = 1;
+/// Version of the manifest encoding, its first field. Version 2 added bookmarks; version 1
+/// manifests are still read.
+pub(crate) const MANIFEST_VERSION: u32 = 2;
 
 pub(crate) const HEADER_LEN: u64 = 64;
 pub(crate) const FOOTER_LEN: u64 = 32;
@@ -73,6 +74,13 @@ pub(crate) struct PageEntry {
     pub ink: Option<ChunkRef>,
 }
 
+/// A bookmarked page. An empty name means the page is listed by its number.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct BookmarkEntry {
+    pub page: PageId,
+    pub name: String,
+}
+
 /// Postcard-encoded. `version` must stay the first field.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Manifest {
@@ -80,6 +88,17 @@ pub(crate) struct Manifest {
     pub next_page_id: PageId,
     pub assets: Vec<AssetEntry>,
     pub pages: Vec<PageEntry>,
+    /// In page order.
+    pub bookmarks: Vec<BookmarkEntry>,
+}
+
+/// The version 1 manifest: no bookmarks.
+#[derive(Deserialize)]
+struct ManifestV1 {
+    version: u32,
+    next_page_id: PageId,
+    assets: Vec<AssetEntry>,
+    pages: Vec<PageEntry>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,8 +214,20 @@ pub(crate) fn decode_manifest(payload: &[u8]) -> Result<Manifest> {
             supported: MANIFEST_VERSION,
         });
     }
-    let (manifest, rest) =
-        postcard::take_from_bytes::<Manifest>(payload).map_err(|_| corrupt("manifest"))?;
+    let (manifest, rest) = if version == 1 {
+        let (m, rest) =
+            postcard::take_from_bytes::<ManifestV1>(payload).map_err(|_| corrupt("manifest"))?;
+        let m = Manifest {
+            version: m.version,
+            next_page_id: m.next_page_id,
+            assets: m.assets,
+            pages: m.pages,
+            bookmarks: Vec::new(),
+        };
+        (m, rest)
+    } else {
+        postcard::take_from_bytes::<Manifest>(payload).map_err(|_| corrupt("manifest"))?
+    };
     if !rest.is_empty() {
         return Err(corrupt("trailing bytes after manifest"));
     }
@@ -204,7 +235,8 @@ pub(crate) fn decode_manifest(payload: &[u8]) -> Result<Manifest> {
     Ok(manifest)
 }
 
-/// Checks that ids are unique and every PDF background names an existing asset.
+/// Checks that ids are unique, every PDF background names an existing asset and every
+/// bookmark an existing page, once.
 pub(crate) fn validate(m: &Manifest) -> Result<()> {
     let mut assets = HashSet::new();
     for a in &m.assets {
@@ -221,6 +253,12 @@ pub(crate) fn validate(m: &Manifest) -> Result<()> {
             && !assets.contains(&asset)
         {
             return Err(corrupt(format!("page {} uses missing asset {asset}", p.id)));
+        }
+    }
+    let mut marked = HashSet::new();
+    for b in &m.bookmarks {
+        if !pages.contains(&b.page) || !marked.insert(b.page) {
+            return Err(corrupt(format!("bad bookmark on page {}", b.page)));
         }
     }
     Ok(())
@@ -316,11 +354,15 @@ mod tests {
                     ink: None,
                 },
             ],
+            bookmarks: vec![BookmarkEntry {
+                page: 2,
+                name: "Ch".into(),
+            }],
         }
     }
 
     /// Pins the manifest encoding: if this fails, the file format changed. Bump
-    /// MANIFEST_VERSION, keep a reader for version 1, then update the bytes.
+    /// MANIFEST_VERSION, keep a reader for the old version, then update the bytes.
     #[test]
     fn manifest_encoding_is_stable() {
         let m = sample_manifest();
@@ -329,8 +371,28 @@ mod tests {
         assert_eq!(decode_manifest(&bytes).unwrap(), m);
     }
 
+    /// Files written before bookmarks still open, with none.
+    #[test]
+    fn version_1_manifests_still_open() {
+        let m = decode_manifest(GOLDEN_MANIFEST_V1).unwrap();
+        let expected = Manifest {
+            version: 1,
+            bookmarks: Vec::new(),
+            ..sample_manifest()
+        };
+        assert_eq!(m, expected);
+    }
+
     #[rustfmt::skip]
     const GOLDEN_MANIFEST: &[u8] = &[
+        2, 3, 1, 0, 0, 128, 32, 232, 7, 239, 253, 182, 245, 13, 2, 0, 0, 0, 25, 68, 0, 0, 70, 68,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 1, 0, 0, 1, 236, 39, 172, 2, 2, 0, 0, 200,
+        66, 0, 0, 72, 67, 1, 0, 0, 180, 65, 10, 20, 30, 40, 255, 255, 255, 255, 0, 0, 1, 2, 2,
+        67, 104,
+    ];
+
+    #[rustfmt::skip]
+    const GOLDEN_MANIFEST_V1: &[u8] = &[
         1, 3, 1, 0, 0, 128, 32, 232, 7, 239, 253, 182, 245, 13, 2, 0, 0, 0, 25, 68, 0, 0, 70, 68,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 1, 0, 0, 1, 236, 39, 172, 2, 2, 0, 0, 200,
         66, 0, 0, 72, 67, 1, 0, 0, 180, 65, 10, 20, 30, 40, 255, 255, 255, 255, 0, 0,
@@ -347,6 +409,12 @@ mod tests {
         let mut m = sample_manifest();
         m.assets.clear();
         assert!(validate(&m).is_err(), "missing asset");
+        let mut m = sample_manifest();
+        m.bookmarks[0].page = 1;
+        assert!(validate(&m).is_err(), "bookmark on a missing page");
+        let mut m = sample_manifest();
+        m.bookmarks.push(m.bookmarks[0].clone());
+        assert!(validate(&m).is_err(), "page bookmarked twice");
         let mut m = sample_manifest();
         m.version = MANIFEST_VERSION + 1;
         assert!(matches!(

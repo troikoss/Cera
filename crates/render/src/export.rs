@@ -13,11 +13,13 @@ use cera_core::{AssetId, Background, Document, MappedBytes, NoteFile, PageSpec, 
 
 use crate::page::draw_page;
 
-/// One page to export: its spec and every stroke on it.
+/// One page to export: its spec, every stroke on it and its bookmark, if any.
 #[derive(Clone, Debug)]
 pub struct ExportPage {
     pub spec: PageSpec,
     pub strokes: Vec<Arc<Stroke>>,
+    /// Bookmarked pages become entries in the PDF's outline.
+    pub bookmark: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -44,9 +46,11 @@ pub fn note_pages(doc: &mut Document) -> cera_core::Result<Vec<ExportPage>> {
     (0..doc.page_count())
         .map(|i| {
             let strokes = doc.load_ink(i)?.to_vec();
+            let page = doc.page(i)?;
             Ok(ExportPage {
-                spec: *doc.page(i)?.spec(),
+                spec: *page.spec(),
                 strokes,
+                bookmark: page.bookmark().map(str::to_owned),
             })
         })
         .collect()
@@ -111,7 +115,20 @@ fn write_pdf(
     };
     {
         let cr = cairo::Context::new(&surface)?;
-        for page in pages {
+        for (number, page) in (1..).zip(pages) {
+            if let Some(name) = &page.bookmark {
+                // Unnamed bookmarks are listed by page number; cairo takes no NUL.
+                let name = match name.replace('\0', "") {
+                    n if n.trim().is_empty() => format!("Page {number}"),
+                    n => n,
+                };
+                surface.add_outline(
+                    cairo::PDF_OUTLINE_ROOT,
+                    &name,
+                    &format!("page={number}"),
+                    cairo::PdfOutline::empty(),
+                )?;
+            }
             surface.set_size(f64::from(page.spec.width), f64::from(page.spec.height))?;
             let pdf = backgrounds.page(&page.spec)?;
             draw_page(&cr, &page.spec, pdf.as_ref(), &page.strokes, true);
@@ -195,6 +212,7 @@ mod tests {
                 },
             ),
             strokes: vec![Arc::new(Stroke::new(Tool::Pen, Rgba8::BLACK, 2.0, line))],
+            bookmark: None,
         }
     }
 
@@ -203,12 +221,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cera-export-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("note.pdf");
-        export_pdf(&out, &[page(100.0), page(200.0)], &HashMap::new()).unwrap();
+        let marked = ExportPage {
+            bookmark: Some(String::new()),
+            ..page(200.0)
+        };
+        export_pdf(&out, &[page(100.0), marked], &HashMap::new()).unwrap();
         let bytes = std::fs::read(&out).unwrap();
         assert!(bytes.starts_with(b"%PDF"));
         let doc = poppler::Document::from_bytes(&glib::Bytes::from_owned(bytes), None).unwrap();
         assert_eq!(doc.n_pages(), 2);
         assert_eq!(doc.page(1).unwrap().size(), (200.0, 100.0));
+        // The bookmarked page is the outline's one entry (poppler-rs can't read its target).
+        let mut outline = poppler::IndexIter::new(&doc);
+        assert!(!outline.next(), "one outline entry");
         assert!(!dir.join(".note.pdf.tmp").exists());
 
         let png = dir.join("page.png");

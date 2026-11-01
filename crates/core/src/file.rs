@@ -22,8 +22,8 @@ use memmap2::Mmap;
 use crate::codec;
 use crate::error::{Error, Result, corrupt};
 use crate::format::{
-    self, ASSET_ALIGN, AssetEntry, AssetKind, ChunkKind, ChunkRef, FOOTER_LEN, FOOTER_MAGIC,
-    Footer, HEADER_LEN, MANIFEST_VERSION, Manifest, PageEntry,
+    self, ASSET_ALIGN, AssetEntry, AssetKind, BookmarkEntry, ChunkKind, ChunkRef, FOOTER_LEN,
+    FOOTER_MAGIC, Footer, HEADER_LEN, MANIFEST_VERSION, Manifest, PageEntry,
 };
 use crate::model::{AssetId, Background, Document, Ink};
 
@@ -402,6 +402,16 @@ fn manifest_for(doc: &Document, assets: &[AssetEntry], ink: &[Option<ChunkRef>])
                 id: page.id(),
                 spec: *page.spec(),
                 ink: *ink,
+            })
+            .collect(),
+        bookmarks: doc
+            .pages
+            .iter()
+            .filter_map(|page| {
+                Some(BookmarkEntry {
+                    page: page.id(),
+                    name: page.bookmark()?.to_owned(),
+                })
             })
             .collect(),
     }

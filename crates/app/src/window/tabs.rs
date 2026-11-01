@@ -378,6 +378,9 @@ impl CeraWindow {
         ] {
             self.set_action_enabled(name, enabled);
         }
+        self.set_action_enabled("bookmark", has_note);
+        self.set_action_enabled("go-to-page", has_note);
+        self.sync_bookmark();
     }
 
     pub(super) fn set_action_enabled(&self, name: &str, enabled: bool) {
@@ -410,6 +413,7 @@ impl CeraWindow {
         };
         imp.title.set_title(&title);
         imp.title.set_subtitle(&subtitle);
+        self.sync_bookmark();
         self.set_title(Some(&title));
     }
 

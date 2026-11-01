@@ -58,7 +58,8 @@ Every add-on waits on the add-on system.
 - [ ] Links on ink: attach a link to a selection, pointing at another note's page or a web
       address (a context menu action, not a tool) — D3 (strokes have no ids to anchor to;
       links must survive renames and moves)
-- [ ] Bookmark pages — D2
+- [x] Bookmark pages — D2 (header menu, Ctrl+D; saved in the manifest, exported as the PDF
+      outline)
 
 ### Vault
 

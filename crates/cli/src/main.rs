@@ -116,8 +116,13 @@ fn info(path: &Path) -> Result<()> {
         let ink = page
             .stored_ink_len()
             .map_or("no ink".into(), |n| format!("ink {}", size(n.into())));
+        let mark = match page.bookmark() {
+            None => String::new(),
+            Some("") => ", bookmarked".into(),
+            Some(name) => format!(", bookmarked “{name}”"),
+        };
         println!(
-            "  {:>5}  {:>6.1} × {:<6.1} pt  {:<12} {background}, {ink}",
+            "  {:>5}  {:>6.1} × {:<6.1} pt  {:<12} {background}, {ink}{mark}",
             i + 1,
             s.width,
             s.height,

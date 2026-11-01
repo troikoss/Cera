@@ -322,6 +322,45 @@ fn restored_page_survives_compaction_in_between() {
 }
 
 #[test]
+fn bookmarks_follow_their_pages() {
+    let path = temp("bookmarks.cera");
+    let mut doc = Document::new([PageSpec::new(PageSpec::A4, Paper::BLANK); 3]);
+    let mut file = NoteFile::create(&path, &mut doc, &[]).unwrap();
+    assert!(!doc.is_dirty());
+    doc.set_bookmark(0, Some(String::new())).unwrap();
+    doc.set_bookmark(2, Some("Summary".into())).unwrap();
+    assert!(doc.is_dirty(), "a bookmark is saved like a page change");
+    assert!(doc.set_bookmark(3, None).is_err());
+    file.save(&mut doc).unwrap();
+
+    let marks = |doc: &Document| -> Vec<(usize, String)> {
+        doc.bookmarks()
+            .map(|(i, p)| (i, p.bookmark().unwrap().to_owned()))
+            .collect()
+    };
+    let (mut file, mut doc) = NoteFile::open(&path).unwrap();
+    assert_eq!(marks(&doc), [(0, String::new()), (2, "Summary".into())]);
+
+    // A moved page takes its bookmark along; a removed one brings it back on undo.
+    let mut h = History::default();
+    h.move_page(&mut doc, 2, 1).unwrap();
+    assert_eq!(marks(&doc), [(0, String::new()), (1, "Summary".into())]);
+    h.remove_page(&mut doc, 0).unwrap();
+    assert_eq!(marks(&doc), [(0, "Summary".into())]);
+    file.save(&mut doc).unwrap();
+    let (_, reopened) = NoteFile::open(&path).unwrap();
+    assert_eq!(marks(&reopened), [(0, "Summary".into())]);
+    h.undo(&mut doc).unwrap();
+    assert_eq!(marks(&doc), [(0, String::new()), (1, "Summary".into())]);
+
+    doc.set_bookmark(1, None).unwrap();
+    file.save(&mut doc).unwrap();
+    file.compact(&mut doc, h.referenced_assets()).unwrap();
+    let (_, reopened) = NoteFile::open(&path).unwrap();
+    assert_eq!(marks(&reopened), [(0, String::new())]);
+}
+
+#[test]
 fn rejects_other_files_and_newer_versions() {
     let path = temp("not-a-note.cera");
     fs::write(

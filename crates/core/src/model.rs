@@ -206,6 +206,8 @@ impl PageSpec {
 pub struct Page {
     id: PageId,
     spec: PageSpec,
+    /// Set if the page is bookmarked: its name, empty to list it by number.
+    bookmark: Option<String>,
     pub(crate) ink: Ink,
 }
 
@@ -227,6 +229,7 @@ impl Page {
         Self {
             id,
             spec,
+            bookmark: None,
             ink: Ink::Loaded {
                 strokes: Vec::new(),
                 stored: None,
@@ -241,6 +244,11 @@ impl Page {
 
     pub fn spec(&self) -> &PageSpec {
         &self.spec
+    }
+
+    /// The bookmark's name (empty if it has none), or `None` if the page isn't bookmarked.
+    pub fn bookmark(&self) -> Option<&str> {
+        self.bookmark.as_deref()
     }
 
     /// The page's strokes, or `None` until [`Document::load_ink`] decodes them.
@@ -285,6 +293,7 @@ impl Page {
         Page {
             id: self.id,
             spec: self.spec,
+            bookmark: self.bookmark.clone(),
             ink: Ink::Loaded {
                 dirty: !strokes.is_empty(),
                 strokes,
@@ -329,6 +338,11 @@ impl Document {
                 if let Some(r) = entry.ink {
                     page.ink = Ink::Stored(r);
                 }
+                page.bookmark = manifest
+                    .bookmarks
+                    .iter()
+                    .find(|b| b.page == entry.id)
+                    .map(|b| b.name.clone());
                 page
             })
             .collect();
@@ -444,6 +458,29 @@ impl Document {
         let page = self.pages.remove(from);
         self.pages.insert(to, page);
         self.layout_dirty = true;
+    }
+
+    /// Bookmarks page `index` (`Some(name)`, empty for none) or removes its bookmark. Not part
+    /// of the undo history, like a bookmark in a book; a page brought back by undo keeps its
+    /// bookmark.
+    pub fn set_bookmark(&mut self, index: usize, bookmark: Option<String>) -> Result<()> {
+        let page = self
+            .pages
+            .get_mut(index)
+            .ok_or(Error::PageOutOfRange(index))?;
+        if page.bookmark != bookmark {
+            page.bookmark = bookmark;
+            self.layout_dirty = true;
+        }
+        Ok(())
+    }
+
+    /// Indices of the bookmarked pages, in order.
+    pub fn bookmarks(&self) -> impl Iterator<Item = (usize, &Page)> {
+        self.pages
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.bookmark.is_some())
     }
 
     pub(crate) fn set_spec(&mut self, index: usize, spec: PageSpec) {

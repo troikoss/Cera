@@ -539,6 +539,42 @@ impl Canvas {
         }
     }
 
+    /// The bookmarked pages: index and name (empty if unnamed), in page order.
+    pub fn bookmarks(&self) -> Vec<(usize, String)> {
+        self.note().map_or_else(Vec::new, |note| {
+            note.borrow()
+                .doc
+                .bookmarks()
+                .map(|(i, p)| (i, p.bookmark().unwrap_or_default().to_owned()))
+                .collect()
+        })
+    }
+
+    pub fn is_bookmarked(&self) -> bool {
+        let index = self.current_page() as usize;
+        self.note().is_some_and(|note| {
+            note.borrow()
+                .doc
+                .page(index)
+                .is_ok_and(|p| p.bookmark().is_some())
+        })
+    }
+
+    /// Bookmarks the current page, or removes its bookmark; saved like an edit, not undone.
+    pub fn set_bookmarked(&self, bookmarked: bool) {
+        let Some(note) = self.note() else { return };
+        let index = self.current_page() as usize;
+        let set = note
+            .borrow_mut()
+            .doc
+            .set_bookmark(index, bookmarked.then(String::new));
+        if let Err(e) = set {
+            tracing::warn!("cannot bookmark page {index}: {e}");
+            return;
+        }
+        self.emit_by_name::<()>("changed", &[]);
+    }
+
     pub fn set_tile_budget(&self, bytes: usize) {
         self.imp().cache.borrow_mut().set_budget(bytes);
         self.queue_draw();

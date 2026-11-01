@@ -9,6 +9,7 @@
 //! - `export.rs`: PDF and PNG export.
 //! - `prefs.rs`: preferences and the shortcuts list.
 
+mod bookmarks;
 mod export;
 mod files;
 mod pages;
@@ -51,6 +52,8 @@ mod imp {
         pub sidebar: TemplateChild<Sidebar>,
         #[template_child]
         pub title: TemplateChild<adw::WindowTitle>,
+        #[template_child]
+        pub bookmarks_button: TemplateChild<gtk::MenuButton>,
         #[template_child]
         pub stack: TemplateChild<gtk::Stack>,
         #[template_child]
@@ -109,6 +112,7 @@ mod imp {
             self.parent_constructed();
             let obj = self.obj();
             obj.setup_actions();
+            obj.setup_bookmarks();
             obj.setup_renderer();
             obj.setup_toolbar();
             obj.setup_tabs();
@@ -317,7 +321,7 @@ impl CeraWindow {
     fn setup_shortcuts(&self) {
         let controller = gtk::ShortcutController::new();
         controller.set_propagation_phase(gtk::PropagationPhase::Bubble);
-        let shortcuts: [(&str, &str, Option<&str>); 17] = [
+        let shortcuts: [(&str, &str, Option<&str>); 18] = [
             ("p", "win.tool", Some("pen")),
             ("h", "win.tool", Some("highlighter")),
             ("e", "win.tool", Some("eraser")),
@@ -343,6 +347,7 @@ impl CeraWindow {
             ),
             ("<Control>Return", "win.add-page", None),
             ("<Control>p", "win.pages", None),
+            ("<Control>d", "win.bookmark", None),
         ];
         for (keys, action, target) in shortcuts {
             let shortcut = gtk::Shortcut::builder()
