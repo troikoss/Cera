@@ -76,7 +76,15 @@ gridview > child:selected picture.page-thumb {
   outline-offset: 2px;
 }
 
-/* The header's bookmark button while the current page is bookmarked. */
-.bookmarked {
+/* The bookmark toggle in a thumbnail's corner: faint on the white paper until set. */
+button.thumb-mark {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 2px;
+  margin: 2px;
+  color: rgb(0 0 0 / 30%);
+}
+
+button.thumb-mark.bookmarked {
   color: var(--accent-color);
 }

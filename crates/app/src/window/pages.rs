@@ -5,7 +5,10 @@
 //!
 //! The Pages button in the files' header (Ctrl+P) switches the sidebar to the pages, and a
 //! back button returns. Tapping a thumbnail shows that page; scrolling the note moves the
-//! selection. A right click or a hold on a thumbnail opens its context menu.
+//! selection. A right click or a hold on a thumbnail opens its context menu. Each thumbnail
+//! has a small bookmark toggle in its corner, and a header toggle shows only the bookmarked
+//! pages (a `FilterListModel` over all of them; the grid's positions are then not page
+//! numbers, so pages are always found by id).
 //! The sorter is bound to the selected tab while the view is on screen and dropped, with its
 //! thumbnails, when the view is hidden or the sidebar closes.
 //!
@@ -50,12 +53,14 @@ pub(super) struct PagesPanel {
     stack: gtk::Stack,
     grid: gtk::GridView,
     actions: gio::SimpleActionGroup,
+    /// Show only bookmarked pages; kept across notes.
+    only_marks: Rc<Cell<bool>>,
 }
 
 /// A cell on screen.
 struct BoundCell {
     picture: gtk::Picture,
-    mark: gtk::Widget,
+    mark: gtk::Button,
 }
 
 pub(super) struct Sorter {
@@ -68,6 +73,9 @@ pub(super) struct Sorter {
     /// Paper for inserted pages.
     paper: Paper,
     store: gio::ListStore,
+    filter: gtk::CustomFilter,
+    filtered: gtk::FilterListModel,
+    only_marks: Rc<Cell<bool>>,
     selection: gtk::SingleSelection,
     thumbs: RefCell<HashMap<PageId, (gdk::Texture, usize, Version)>>,
     /// Asked-for thumbnails and what they will be drawn from.
@@ -102,9 +110,36 @@ impl CeraWindow {
             .title("No note open")
             .css_classes(["compact"])
             .build();
+        let no_marks = adw::StatusPage::builder()
+            .icon_name("user-bookmarks-symbolic")
+            .title("No bookmarks")
+            .description("Bookmark a page with the button on its thumbnail")
+            .css_classes(["compact"])
+            .build();
         let stack = gtk::Stack::new();
         stack.add_named(&scroller, Some("grid"));
         stack.add_named(&empty, Some("empty"));
+        stack.add_named(&no_marks, Some("no-marks"));
+        let only_marks = Rc::new(Cell::new(false));
+        let filter_button = gtk::ToggleButton::builder()
+            .icon_name("user-bookmarks-symbolic")
+            .tooltip_text("Show only bookmarked pages")
+            .build();
+        filter_button.connect_toggled(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            #[strong]
+            only_marks,
+            move |b| {
+                only_marks.set(b.is_active());
+                let sorter = win.imp().sorter.borrow().clone();
+                if let Some(sorter) = sorter {
+                    sorter.filter.changed(gtk::FilterChange::Different);
+                    sorter.follow_page(true);
+                    win.update_pages_view();
+                }
+            }
+        ));
 
         let back = gtk::Button::builder()
             .icon_name("go-previous-symbolic")
@@ -115,6 +150,7 @@ impl CeraWindow {
             .title_widget(&adw::WindowTitle::new("Pages", ""))
             .build();
         header.pack_start(&back);
+        header.pack_end(&filter_button);
 
         let root = adw::ToolbarView::new();
         root.add_top_bar(&header);
@@ -128,6 +164,7 @@ impl CeraWindow {
             stack,
             grid,
             actions,
+            only_marks,
         });
 
         let pages = gio::ActionEntry::builder("pages")
@@ -186,13 +223,25 @@ impl CeraWindow {
                 let sorter = self.new_sorter(canvas);
                 panel.grid.set_factory(Some(&sorter.factory()));
                 panel.grid.set_model(Some(&sorter.selection));
-                panel.stack.set_visible_child_name("grid");
                 *imp.sorter.borrow_mut() = Some(sorter.clone());
                 sorter.follow_page(true);
             }
             None => panel.stack.set_visible_child_name("empty"),
         }
+        self.update_pages_view();
         self.update_pages_actions();
+    }
+
+    /// The grid, or a status page when there is no note or (filtered) no bookmark.
+    fn update_pages_view(&self) {
+        let imp = self.imp();
+        let Some(panel) = imp.pages.get() else { return };
+        let name = match imp.sorter.borrow().as_ref() {
+            None => "empty",
+            Some(s) if s.filtered.n_items() == 0 && panel.only_marks.get() => "no-marks",
+            Some(_) => "grid",
+        };
+        panel.stack.set_visible_child_name(name);
     }
 
     fn new_sorter(&self, canvas: Canvas) -> Rc<Sorter> {
@@ -211,8 +260,32 @@ impl CeraWindow {
             );
         }
         let store = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let selection = gtk::SingleSelection::new(Some(store.clone()));
+        let only_marks = imp.pages.get().expect("set up").only_marks.clone();
+        let filter = {
+            let note = Rc::downgrade(&note);
+            let only_marks = only_marks.clone();
+            gtk::CustomFilter::new(move |item| {
+                if !only_marks.get() {
+                    return true;
+                }
+                let (Some(note), Some(id)) = (
+                    note.upgrade(),
+                    item.downcast_ref::<glib::BoxedAnyObject>()
+                        .map(|b| *b.borrow::<PageId>()),
+                ) else {
+                    return true;
+                };
+                let note = note.borrow();
+                note.doc
+                    .page_index(id)
+                    .and_then(|i| note.doc.page(i).ok())
+                    .is_some_and(|p| p.bookmark().is_some())
+            })
+        };
+        let filtered = gtk::FilterListModel::new(Some(store.clone()), Some(filter.clone()));
+        let selection = gtk::SingleSelection::new(Some(filtered.clone()));
         selection.set_autoselect(false);
+        selection.set_can_unselect(true);
         let sorter = Rc::new_cyclic(|me| Sorter {
             me: me.clone(),
             canvas: canvas.clone(),
@@ -222,6 +295,9 @@ impl CeraWindow {
             device_scale: f64::from(self.scale_factor()),
             paper: self.new_page_paper(),
             store,
+            filter,
+            filtered,
+            only_marks,
             selection,
             thumbs: RefCell::default(),
             pending: RefCell::default(),
@@ -441,34 +517,46 @@ pub(super) fn blank_like(spec: &PageSpec, paper: Paper) -> PageSpec {
 impl Sorter {
     fn factory(self: &Rc<Self>) -> gtk::SignalListItemFactory {
         let factory = gtk::SignalListItemFactory::new();
-        factory.connect_setup(|_, item| {
+        let weak = Rc::downgrade(self);
+        factory.connect_setup(move |_, item| {
             let item = item.downcast_ref::<gtk::ListItem>().expect("a list item");
             let picture = gtk::Picture::builder()
                 .content_fit(gtk::ContentFit::Contain)
                 .can_shrink(true)
-                .halign(gtk::Align::Center)
                 .css_classes(["page-thumb"])
                 .build();
-            let label = gtk::Label::builder().css_classes(["caption"]).build();
-            let mark = gtk::Image::builder()
+            // A small bookmark toggle in the thumbnail's top right corner.
+            let mark = gtk::Button::builder()
                 .icon_name("user-bookmarks-symbolic")
-                .tooltip_text("Bookmarked")
-                .css_classes(["bookmarked"])
+                .halign(gtk::Align::End)
+                .valign(gtk::Align::Start)
+                .css_classes(["flat", "circular", "thumb-mark"])
                 .build();
-            let caption = gtk::Box::builder()
-                .spacing(4)
+            mark.connect_clicked(glib::clone!(
+                #[weak]
+                item,
+                #[strong]
+                weak,
+                move |_| {
+                    if let (Some(sorter), Some(id)) = (weak.upgrade(), page_of(&item)) {
+                        sorter.toggle_bookmark_of(id);
+                    }
+                }
+            ));
+            let thumb = gtk::Overlay::builder()
+                .child(&picture)
                 .halign(gtk::Align::Center)
                 .build();
-            caption.append(&label);
-            caption.append(&mark);
+            thumb.add_overlay(&mark);
+            let label = gtk::Label::builder().css_classes(["caption"]).build();
             let cell = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
                 .spacing(6)
                 .margin_top(6)
                 .margin_bottom(6)
                 .build();
-            cell.append(&picture);
-            cell.append(&caption);
+            cell.append(&thumb);
+            cell.append(&label);
             item.set_child(Some(&cell));
             add_menu_gestures(item, &cell);
         });
@@ -478,18 +566,25 @@ impl Sorter {
             let item = item.downcast_ref::<gtk::ListItem>().expect("a list item");
             let Some(id) = page_of(item) else { return };
             let Some(cell) = item.child() else { return };
-            let picture = cell
+            let thumb = cell
                 .first_child()
+                .and_downcast::<gtk::Overlay>()
+                .expect("thumbnail");
+            let picture = thumb
+                .child()
                 .and_downcast::<gtk::Picture>()
                 .expect("picture");
-            let caption = picture.next_sibling().expect("caption");
-            let label = caption
-                .first_child()
+            let mark = picture
+                .next_sibling()
+                .and_downcast::<gtk::Button>()
+                .expect("bookmark toggle");
+            let label = thumb
+                .next_sibling()
                 .and_downcast::<gtk::Label>()
                 .expect("label");
-            label.set_label(&(item.position() + 1).to_string());
-            let mark = label.next_sibling().expect("mark");
-            mark.set_visible(sorter.is_bookmarked(id));
+            let index = sorter.note.borrow().doc.page_index(id).unwrap_or(0);
+            label.set_label(&(index + 1).to_string());
+            show_mark(&mark, sorter.is_bookmarked(id));
             sorter.bind(id, BoundCell { picture, mark });
         });
         let weak = Rc::downgrade(self);
@@ -511,16 +606,43 @@ impl Sorter {
             .is_some_and(|p| p.bookmark().is_some())
     }
 
+    /// The selected page's index in the note.
     fn selected(&self) -> Option<usize> {
-        let i = self.selection.selected();
-        (i != gtk::INVALID_LIST_POSITION).then_some(i as usize)
+        let id = self
+            .selection
+            .selected_item()
+            .and_downcast::<glib::BoxedAnyObject>()
+            .map(|b| *b.borrow::<PageId>())?;
+        self.note.borrow().doc.page_index(id)
     }
 
-    /// Selects `index` without moving the note.
+    /// Where page `index` is in the grid, if it is shown.
+    fn position_of(&self, index: usize) -> Option<u32> {
+        let id = self.note.borrow().doc.page(index).ok()?.id();
+        if !self.only_marks.get() {
+            return Some(index as u32);
+        }
+        (0..self.filtered.n_items()).find(|&i| {
+            self.filtered
+                .item(i)
+                .and_downcast::<glib::BoxedAnyObject>()
+                .is_some_and(|b| *b.borrow::<PageId>() == id)
+        })
+    }
+
+    /// Selects page `index` (nothing if it is filtered out), which shows it in the note.
+    fn select_page(&self, index: usize) {
+        let index = index.min((self.store.n_items() as usize).saturating_sub(1));
+        self.selection.set_selected(
+            self.position_of(index)
+                .unwrap_or(gtk::INVALID_LIST_POSITION),
+        );
+    }
+
+    /// Selects page `index` without moving the note.
     fn select_quietly(&self, index: u32) {
         self.syncing.set(true);
-        self.selection
-            .set_selected(index.min(self.store.n_items().saturating_sub(1)));
+        self.select_page(index as usize);
         self.syncing.set(false);
     }
 
@@ -539,9 +661,9 @@ impl Sorter {
             .root()
             .and_downcast::<CeraWindow>()
             .and_then(|w| w.imp().pages.get().map(|p| p.grid.clone()))
-            && page < self.store.n_items()
+            && let Some(position) = self.position_of(page as usize)
         {
-            grid.scroll_to(page, gtk::ListScrollFlags::NONE, None);
+            grid.scroll_to(position, gtk::ListScrollFlags::NONE, None);
         }
     }
 
@@ -582,9 +704,7 @@ impl Sorter {
             let Some(sorter) = me.upgrade() else { return };
             sorter.refresh.take();
             sorter.reload();
-            for (&id, cell) in sorter.bound.borrow().iter() {
-                cell.mark.set_visible(sorter.is_bookmarked(id));
-            }
+            sorter.marks_changed();
             sorter.send_jobs();
         });
         *self.refresh.borrow_mut() = Some(source);
@@ -612,6 +732,30 @@ impl Sorter {
         if let Some(index) = self.selected() {
             let on = !self.selected_bookmarked();
             self.canvas.set_page_bookmarked(index, on);
+            self.marks_changed();
+        }
+    }
+
+    fn toggle_bookmark_of(&self, id: PageId) {
+        let Some(index) = self.note.borrow().doc.page_index(id) else {
+            return;
+        };
+        self.canvas
+            .set_page_bookmarked(index, !self.is_bookmarked(id));
+        self.marks_changed();
+    }
+
+    /// After bookmarks changed: the toggles on screen, and the filter if it is on.
+    fn marks_changed(&self) {
+        for (&id, cell) in self.bound.borrow().iter() {
+            show_mark(&cell.mark, self.is_bookmarked(id));
+        }
+        if self.only_marks.get() {
+            self.filter.changed(gtk::FilterChange::Different);
+            self.follow_page(true);
+        }
+        if let Some(win) = self.canvas.root().and_downcast::<CeraWindow>() {
+            win.update_pages_view();
         }
     }
 
@@ -626,7 +770,7 @@ impl Sorter {
         });
         if done.is_some() {
             self.reload();
-            self.selection.set_selected(at as u32);
+            self.select_page(at);
         }
     }
 
@@ -642,8 +786,7 @@ impl Sorter {
         if done.is_some() {
             self.reload();
             // The page that took its place, or the new last page.
-            self.selection
-                .set_selected((index as u32).min(self.store.n_items().saturating_sub(1)));
+            self.select_page(index);
         }
     }
 
@@ -660,7 +803,7 @@ impl Sorter {
         });
         if done.is_some() {
             self.reload();
-            self.selection.set_selected(to as u32);
+            self.select_page(to);
         }
     }
 
@@ -937,6 +1080,17 @@ fn page_menu(cell: &gtk::Box, x: f64, y: f64, touch: bool, bookmarked: bool) {
         glib::idle_add_local_once(move || m.unparent());
     });
     popover.popup();
+}
+
+/// The bookmark toggle shows the page's state: accent-coloured when bookmarked.
+fn show_mark(mark: &gtk::Button, on: bool) {
+    if on {
+        mark.add_css_class("bookmarked");
+        mark.set_tooltip_text(Some("Remove bookmark"));
+    } else {
+        mark.remove_css_class("bookmarked");
+        mark.set_tooltip_text(Some("Bookmark"));
+    }
 }
 
 fn page_of(item: &gtk::ListItem) -> Option<PageId> {

@@ -57,12 +57,6 @@
                       </object>
                     </child>
                     <child type="end">
-                      <object class="GtkMenuButton" id="bookmarks_button">
-                        <property name="icon-name">user-bookmarks-symbolic</property>
-                        <property name="tooltip-text" translatable="yes">Bookmarks</property>
-                      </object>
-                    </child>
-                    <child type="end">
                       <object class="GtkButton">
                         <property name="icon-name">cera-page-add-symbolic</property>
                         <property name="tooltip-text" translatable="yes">Add page after this one</property>

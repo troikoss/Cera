@@ -20,7 +20,8 @@ slot counts in preferences, rectangle select, layer order for a selection; then 
 D2 items: pen (stroke-touch) select as a third lasso mode, page bookmarks (manifest
 version 2) and add space as a fourth lasso mode. The lasso lost its swatches; a selection is
 recoloured from Change style in the context menu. The page sorter moved from its dialog into
-the sidebar, as a view next to the files, with a context menu on each thumbnail. Checked with injected pointer and key input in the headless compositor; yours to
+the sidebar, as a view next to the files, with a context menu and a bookmark toggle on each
+thumbnail and a filter for bookmarked pages; the header's bookmarks menu is gone. Checked with injected pointer and key input in the headless compositor; yours to
 test on the tablet.
 
 ## M0 — Skeleton

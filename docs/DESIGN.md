@@ -336,12 +336,12 @@ AdwApplicationWindow
       │  │  │       GtkSearchBar
       │  │  └─ GtkScrolledWindow > GtkListView (vault tree)
       │  └─ pages: AdwToolbarView
-      │     ├─ top: AdwHeaderBar [back to files] "Pages"
+      │     ├─ top: AdwHeaderBar [back to files] "Pages" [only bookmarks]
       │     ├─ GtkScrolledWindow > GtkGridView (page thumbnails)
       │     └─ bottom: [insert ▾] [paper ▾] [earlier] [later] [delete]
       └─ content: AdwToolbarView
          ├─ top: AdwHeaderBar [sidebar] AdwWindowTitle("Lecture 03", "Page 2 of 18")
-         │                    [add page] [bookmarks] [menu]
+         │                    [add page] [menu]
          │       AdwTabBar (autohide)
          └─ AdwTabView → per tab: GtkOverlay
             ├─ GtkScrolledWindow > Canvas
@@ -385,9 +385,11 @@ AdwApplicationWindow
   per-page edit counter) and spec it was drawn from; 400 ms after the last edit the stale
   ones on screen are drawn again, keeping the old picture until then. The sorter follows the
   selected tab, and drops its thumbnails when the pages view or the sidebar is hidden.
-- **Bookmarks button** (`window/bookmarks.rs`): a menu built each time it opens: "Bookmark
-  this page" (a check, also Ctrl+D) and the bookmarked pages, a tap jumps there. The button
-  turns accent-coloured on a bookmarked page; the page sorter marks bookmarked thumbnails.
+- **Bookmarks** (`window/bookmarks.rs`, `window/pages.rs`): Ctrl+D toggles the current
+  page's bookmark. In the pages view each thumbnail has a small bookmark toggle in its top
+  right corner (faint until set, then accent-coloured), and a header toggle shows only the
+  bookmarked pages: a `GtkFilterListModel` over all of them, so grid positions are not page
+  numbers and the sorter finds pages by id. Filtered with none set, it shows "No bookmarks".
 - **Import:** drop a PDF on the sidebar/window or use + → Import PDF… → `AdwDialog` with
   `AdwEntryRow` (name), `AdwComboRow` (folder), page range, keep original.
 - **No vault open:** `AdwStatusPage` "Open a vault" with "Open folder" / "Create vault" and a

@@ -55,8 +55,6 @@ mod imp {
         #[template_child]
         pub title: TemplateChild<adw::WindowTitle>,
         #[template_child]
-        pub bookmarks_button: TemplateChild<gtk::MenuButton>,
-        #[template_child]
         pub stack: TemplateChild<gtk::Stack>,
         #[template_child]
         pub recent_list: TemplateChild<gtk::ListBox>,
