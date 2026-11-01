@@ -86,7 +86,8 @@ impl CeraWindow {
         reclick.connect_released(glib::clone!(
             #[weak(rename_to = win)]
             self,
-            move |_, _, _, _| {
+            move |_, _, x, y| {
+                win.imp().tool_tap.set((x, y));
                 let before = pressed_on.borrow_mut().take();
                 glib::idle_add_local_once(glib::clone!(
                     #[weak]
@@ -123,6 +124,7 @@ impl CeraWindow {
                     let tools = &win.imp().tool_state;
                     if b.is_active() && tools.tool.get() != ToolKind::Lasso {
                         tools.set_color(win.palette()[slot]);
+                        win.update_size_dots();
                     }
                 }
             ));
@@ -255,6 +257,14 @@ impl CeraWindow {
         }
     }
 
+    /// The size slots' dots take the current colour.
+    fn update_size_dots(&self) {
+        let color = rgba(self.imp().tool_state.color());
+        for (_, dot) in self.imp().sizes.borrow().iter() {
+            dot.set_color(color);
+        }
+    }
+
     /// Pressure for the pen, the shape for the lasso.
     fn show_tool_popover(&self) {
         let imp = self.imp();
@@ -283,12 +293,22 @@ impl CeraWindow {
         self.tool_popup(&content);
     }
 
-    /// A popover pointing at the tool buttons. It hangs off the tool bar: AdwToggleGroup
+    /// A popover pointing at the tapped tool. It hangs off the tool bar: AdwToggleGroup
     /// hides children it doesn't know about when focus moves into them.
     fn tool_popup(&self, content: &impl IsA<gtk::Widget>) {
         let imp = self.imp();
         let popover = popup(content, &*imp.toolbar);
-        if let Some(b) = imp.tools.compute_bounds(&*imp.toolbar) {
+        // The group's own button under the tap, else the whole group.
+        let (x, y) = imp.tool_tap.get();
+        let mut button = imp.tools.pick(x, y, gtk::PickFlags::DEFAULT);
+        while let Some(w) = button.clone() {
+            match w.parent() {
+                Some(p) if p == *imp.tools.upcast_ref::<gtk::Widget>() => break,
+                p => button = p,
+            }
+        }
+        let target: gtk::Widget = button.unwrap_or_else(|| imp.tools.clone().upcast());
+        if let Some(b) = target.compute_bounds(&*imp.toolbar) {
             popover.set_pointing_to(Some(&gdk::Rectangle::new(
                 b.x() as i32,
                 b.y() as i32,

@@ -74,6 +74,8 @@ mod imp {
         pub(super) tool_state: Rc<Tools>,
         pub(super) swatches: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
         pub(super) sizes: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
+        /// Where the tool buttons were last tapped, for pointing their popover at the tool.
+        pub(super) tool_tap: Cell<(f64, f64)>,
         pub(super) renderer: OnceCell<Rc<Renderer>>,
         pub(super) sinks: RefCell<HashMap<DocId, Sink>>,
         pub(super) next_doc: Cell<DocId>,

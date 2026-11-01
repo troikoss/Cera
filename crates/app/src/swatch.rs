@@ -53,8 +53,11 @@ mod imp {
             color.set_alpha(1.0);
             snapshot.append_color(&color, &bounds);
             snapshot.pop();
-            let edge = gdk::RGBA::new(0.0, 0.0, 0.0, 0.2);
-            snapshot.append_border(&circle, &[1.0; 4], &[edge; 4]);
+            // An edge in the text colour, so black stays visible in dark mode and white or
+            // yellow in light mode.
+            let mut edge = obj.color();
+            edge.set_alpha(0.45);
+            snapshot.append_border(&circle, &[1.5; 4], &[edge; 4]);
         }
     }
 }
