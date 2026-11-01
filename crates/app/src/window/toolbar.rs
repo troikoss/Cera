@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The floating tool bar (DESIGN.md §9): tools, colour swatches, size slots, the lasso's
 //! actions and "add page". How many swatches and size slots it shows is a preference.
-//! Tapping the active pen again opens its pressure setting; a long press (or right click) on
+//! Tapping the active pen again opens its pressure setting, the active lasso its shape
+//! (free loop or rectangle); a long press (or right click) on
 //! a swatch opens the palette and colour wheel for that slot, on a size slot a width slider.
 //! Tool settings and slots are saved in the app settings.
 
@@ -49,7 +50,9 @@ impl CeraWindow {
             tools.pen_width.set(s.pen_width);
             tools.highlighter_width.set(s.highlighter_width);
             tools.pressure.set(s.pressure);
+            tools.rect_select.set(s.rect_select);
         });
+        self.update_lasso_icon();
         imp.tools.connect_active_name_notify(glib::clone!(
             #[weak(rename_to = win)]
             self,
@@ -252,12 +255,14 @@ impl CeraWindow {
         }
     }
 
-    /// Pressure for the pen.
+    /// Pressure for the pen, the shape for the lasso.
     fn show_tool_popover(&self) {
         let imp = self.imp();
         let tools = imp.tool_state.clone();
-        if tools.tool.get() != ToolKind::Pen {
-            return;
+        match tools.tool.get() {
+            ToolKind::Pen => {}
+            ToolKind::Lasso => return self.show_select_shape(),
+            _ => return,
         }
         let label = gtk::Label::builder()
             .label("Pressure")
@@ -275,7 +280,78 @@ impl CeraWindow {
         let content = popover_box(gtk::Orientation::Horizontal);
         content.append(&label);
         content.append(&switch);
-        popup(&content, &*imp.tools);
+        self.tool_popup(&content);
+    }
+
+    /// A popover pointing at the tool buttons. It hangs off the tool bar: AdwToggleGroup
+    /// hides children it doesn't know about when focus moves into them.
+    fn tool_popup(&self, content: &impl IsA<gtk::Widget>) {
+        let imp = self.imp();
+        let popover = popup(content, &*imp.toolbar);
+        if let Some(b) = imp.tools.compute_bounds(&*imp.toolbar) {
+            popover.set_pointing_to(Some(&gdk::Rectangle::new(
+                b.x() as i32,
+                b.y() as i32,
+                b.width() as i32,
+                b.height() as i32,
+            )));
+        }
+    }
+
+    /// Free loop or rectangle.
+    fn show_select_shape(&self) {
+        let content = popover_box(gtk::Orientation::Horizontal);
+        content.set_spacing(6);
+        let rect = self.imp().tool_state.rect_select.get();
+        let mut group: Option<gtk::ToggleButton> = None;
+        for (shape_rect, icon, label) in [
+            (false, "cera-lasso-symbolic", "_Lasso"),
+            (true, "cera-select-rect-symbolic", "_Rectangle"),
+        ] {
+            let button = gtk::ToggleButton::builder()
+                .child(
+                    &adw::ButtonContent::builder()
+                        .icon_name(icon)
+                        .label(label)
+                        .use_underline(true)
+                        .build(),
+                )
+                .css_classes(["flat"])
+                .active(rect == shape_rect)
+                .build();
+            button.set_group(group.as_ref());
+            group.get_or_insert_with(|| button.clone());
+            button.connect_toggled(glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                move |b| {
+                    if b.is_active() {
+                        win.imp().tool_state.rect_select.set(shape_rect);
+                        settings::update(|s| s.rect_select = shape_rect);
+                        win.update_lasso_icon();
+                    }
+                }
+            ));
+            content.append(&button);
+        }
+        self.tool_popup(&content);
+    }
+
+    /// The lasso's tool button shows the selection shape.
+    fn update_lasso_icon(&self) {
+        let rect = self.imp().tool_state.rect_select.get();
+        if let Some(toggle) = self.imp().tools.toggle_by_name("lasso") {
+            toggle.set_icon_name(Some(if rect {
+                "cera-select-rect-symbolic"
+            } else {
+                "cera-lasso-symbolic"
+            }));
+            toggle.set_tooltip(if rect {
+                "Rectangle select (L)"
+            } else {
+                "Lasso (L)"
+            });
+        }
     }
 
     /// A slider for the width of size slot `slot`; moving it selects the slot.

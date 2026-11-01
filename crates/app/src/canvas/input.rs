@@ -94,6 +94,8 @@ pub struct Tools {
     pub highlighter_width: Cell<f32>,
     /// The pen's width follows the stylus pressure.
     pub pressure: Cell<bool>,
+    /// The lasso selects with a rectangle instead of a free loop.
+    pub rect_select: Cell<bool>,
 }
 
 impl Default for Tools {
@@ -105,6 +107,7 @@ impl Default for Tools {
             pen_width: Cell::new(PEN_WIDTHS[1]),
             highlighter_width: Cell::new(HIGHLIGHTER_WIDTHS[1]),
             pressure: Cell::new(true),
+            rect_select: Cell::new(false),
         }
     }
 }

@@ -28,6 +28,8 @@ pub struct Settings {
     pub pen_width: f32,
     pub highlighter_width: f32,
     pub pressure: bool,
+    /// The lasso tool draws a rectangle.
+    pub rect_select: bool,
     /// Tap with two fingers to undo, three to redo.
     pub finger_taps: bool,
     /// One finger draws; two fingers scroll and zoom.
@@ -48,6 +50,7 @@ impl Default for Settings {
             pen_width: PEN_WIDTHS[1],
             highlighter_width: HIGHLIGHTER_WIDTHS[1],
             pressure: true,
+            rect_select: false,
             finger_taps: true,
             draw_with_finger: false,
             tile_budget_mib: 128,

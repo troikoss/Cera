@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Lasso selection (DESIGN.md §9): draw a loop on a page to select the strokes mostly inside
-//! it, then drag to move them, or delete, recolour, cut, copy and paste (also into other
+//! Lasso selection (DESIGN.md §9): draw a loop (or, in rectangle mode, drag out a rectangle)
+//! on a page to select the strokes mostly inside it, then drag to move them, or delete, recolour, cut, copy and paste (also into other
 //! notes).
 //!
 //! While strokes are selected they are left out of the page's ink tiles and drawn from one
@@ -37,11 +37,13 @@ fn accent() -> gdk::RGBA {
     gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
 }
 
-/// The loop being drawn, in page points.
+/// The loop being drawn, in page points. A rectangle is kept as its four corners, starting
+/// where the drag began.
 pub(super) struct LassoPath {
     page: PageId,
     index: usize,
     points: Vec<(f32, f32)>,
+    rect: bool,
 }
 
 /// Strokes drawn into one texture, and the page area (points) it covers.
@@ -143,6 +145,7 @@ impl Canvas {
                 page,
                 index,
                 points: vec![p],
+                rect: self.tools().rect_select.get(),
             });
             self.queue_draw();
         }
@@ -160,6 +163,12 @@ impl Canvas {
         } else if let Some(path) = imp.lasso.borrow_mut().as_mut()
             && let Some(p) = self.point_on(path.page, x, y)
         {
+            if path.rect {
+                let (x0, y0) = path.points[0];
+                path.points = vec![(x0, y0), (p.0, y0), p, (x0, p.1)];
+                self.queue_draw();
+                return;
+            }
             let last = *path.points.last().expect("starts with a point");
             if (p.0 - last.0).hypot(p.1 - last.1) >= min_step {
                 path.points.push(p);
@@ -542,6 +551,9 @@ impl Canvas {
                 } else {
                     builder.line_to(vx, vy);
                 }
+            }
+            if path.rect {
+                builder.close();
             }
             let stroke = gsk::Stroke::new(1.5);
             stroke.set_dash(&[4.0, 4.0]);
