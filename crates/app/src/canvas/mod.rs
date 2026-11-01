@@ -36,7 +36,7 @@ pub use self::input::{
     HIGHLIGHTER_WIDTH_RANGE, HIGHLIGHTER_WIDTHS, MAX_COLOR_SLOTS, MAX_SIZE_SLOTS, PEN_COLORS,
     PEN_WIDTH_RANGE, PEN_WIDTHS, ToolKind, Tools,
 };
-pub use self::lasso::has_clipboard;
+pub use self::lasso::{HOLD_SLOP_PX, HOLD_TIME, InputSource, has_clipboard};
 use self::layout::{Layout, View};
 use self::wet::WetStroke;
 use crate::note::SharedNote;
@@ -123,6 +123,10 @@ mod imp {
         pub(super) wet: RefCell<Vec<WetStroke>>,
         pub(super) lasso: RefCell<Option<lasso::LassoPath>>,
         pub(super) selection: RefCell<Option<lasso::Selection>>,
+        /// What pressed last (stylus, mouse or finger), for the context menu.
+        pub(super) input_source: Cell<lasso::InputSource>,
+        /// A lasso press that may turn into a hold.
+        pub(super) hold: RefCell<Option<lasso::Hold>>,
         pub(super) ghosts: RefCell<Vec<lasso::Ghost>>,
         pub(super) erasing: Cell<bool>,
         /// The stroke this pen contact drew; a barrel press mid-stroke erases around it.
@@ -160,6 +164,8 @@ mod imp {
                 wet: RefCell::default(),
                 lasso: RefCell::default(),
                 selection: RefCell::default(),
+                input_source: Cell::default(),
+                hold: RefCell::default(),
                 ghosts: RefCell::default(),
                 erasing: Cell::new(false),
                 drawn: RefCell::default(),
@@ -209,10 +215,19 @@ mod imp {
                     glib::subclass::Signal::builder("changed").build(),
                     // A lasso selection was made or ended.
                     glib::subclass::Signal::builder("selection-changed").build(),
-                    // The selection was tapped, or the canvas right-clicked: show the
-                    // selection's actions pointing at (x, y, width, height).
+                    // Show the lasso's actions (a tap on the selection, a hold, a right
+                    // click).
+                    // Params: x, y, width, height, `InputSource` as u32, and whether it
+                    // points away from the selection (where Paste would put the strokes).
                     glib::subclass::Signal::builder("context-menu")
-                        .param_types([f64::static_type(); 4])
+                        .param_types([
+                            f64::static_type(),
+                            f64::static_type(),
+                            f64::static_type(),
+                            f64::static_type(),
+                            u32::static_type(),
+                            bool::static_type(),
+                        ])
                         .build(),
                 ]
             })

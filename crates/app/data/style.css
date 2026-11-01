@@ -35,6 +35,13 @@ label.debug-overlay {
   margin: 8px 2px;
 }
 
+/* The context menu opened by the stylus or a finger: taller rows, easier to hit. */
+popover.touch-menu modelbutton {
+  min-height: 44px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
 /* A folder in the vault tree that a dragged file would move into. */
 .navigation-sidebar row:drop(active) {
   background-color: alpha(var(--accent-bg-color), 0.25);

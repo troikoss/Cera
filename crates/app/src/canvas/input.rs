@@ -209,6 +209,7 @@ impl Canvas {
                     return;
                 }
                 g.set_state(gtk::EventSequenceState::Claimed);
+                canvas.imp().input_source.set(super::InputSource::Stylus);
                 let eraser_end = g
                     .device_tool()
                     .is_some_and(|t| t.tool_type() == gdk::DeviceToolType::Eraser);
@@ -264,6 +265,7 @@ impl Canvas {
                     return;
                 }
                 let time = g.current_event().map_or(0, |e| e.time());
+                canvas.imp().input_source.set(super::InputSource::Mouse);
                 canvas.begin(
                     Sample {
                         x,
@@ -318,10 +320,7 @@ impl Canvas {
                     return;
                 }
                 g.set_state(gtk::EventSequenceState::Claimed);
-                let on_selection = canvas
-                    .selection_view_rect()
-                    .filter(|&(rx, ry, w, h)| x >= rx && x <= rx + w && y >= ry && y <= ry + h);
-                canvas.emit_context_menu(on_selection.unwrap_or((x, y, 1.0, 1.0)));
+                canvas.context_menu_at(x, y, super::InputSource::Mouse);
             }
         ));
         self.add_controller(context);
@@ -500,6 +499,7 @@ impl Canvas {
 
     /// One-finger drawing ("draw with finger"): touches arrive here instead of panning.
     pub fn touch_begin(&self, x: f64, y: f64, time: u32) {
+        self.imp().input_source.set(super::InputSource::Touch);
         let pressure = MOUSE_PRESSURE;
         self.begin(
             Sample {

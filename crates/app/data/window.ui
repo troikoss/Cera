@@ -279,57 +279,6 @@
       </object>
     </property>
   </template>
-  <!-- The lasso's actions: tap the selection, or right-click the canvas. -->
-  <menu id="context_menu">
-    <section>
-      <item>
-        <attribute name="label" translatable="yes">Cu_t</attribute>
-        <attribute name="action">win.cut</attribute>
-        <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">_Copy</attribute>
-        <attribute name="action">win.copy</attribute>
-        <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">_Paste</attribute>
-        <attribute name="action">win.paste</attribute>
-        <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">_Delete</attribute>
-        <attribute name="action">win.delete-selection</attribute>
-        <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-    </section>
-    <section>
-      <item>
-        <attribute name="label" translatable="yes">Bring to _Front</attribute>
-        <attribute name="action">win.arrange</attribute>
-        <attribute name="target">front</attribute>
-        <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">Bring For_ward</attribute>
-        <attribute name="action">win.arrange</attribute>
-        <attribute name="target">forward</attribute>
-        <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">Send Back_ward</attribute>
-        <attribute name="action">win.arrange</attribute>
-        <attribute name="target">backward</attribute>
-        <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">Send to _Back</attribute>
-        <attribute name="action">win.arrange</attribute>
-        <attribute name="target">back</attribute>
-        <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-    </section>
-  </menu>
   <menu id="primary_menu">
     <section>
       <item>

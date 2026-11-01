@@ -338,9 +338,13 @@ AdwApplicationWindow
   gradient nodes (`wheel.rs`); the selected size slot → width slider. How many swatches and
   size slots show is a preference. The eraser has size slots (radius in logical px, also used
   by the stylus's eraser end and barrel) and no swatches. With the lasso, the swatches recolour the selection; cut, copy,
-  paste, delete and arrange are in a context menu (`GtkPopoverMenu`, entries hidden when
-  their action is disabled): tap the selection without dragging, tap empty paper to paste,
-  or right-click with the mouse anywhere. Tool settings and slots are app settings
+  paste, delete and arrange are in a context menu (`GtkPopoverMenu`, built per opening with
+  only the entries that apply). It opens per input: the **mouse** right-clicks anywhere (a
+  compact menu below the pointer; left clicks never open it); the **stylus**, or a finger
+  drawing with the lasso, taps the selection or holds still for 500 ms anywhere; a **finger**
+  that pans holds still, or taps the selection (`touch.rs`). Stylus and finger menus sit above
+  the selection or the press, out from under the hand, with 44 px rows. Opened away from the
+  selection the menu offers Paste, which pastes centred on that point. Tool settings and slots are app settings
   (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.
 - **Pages button:** `AdwDialog` (a bottom sheet when narrow) with a `GtkGridView` of page

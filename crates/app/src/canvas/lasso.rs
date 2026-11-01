@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Lasso selection (DESIGN.md §9): draw a loop (or, in rectangle mode, drag out a rectangle)
 //! on a page to select the strokes mostly inside it, then drag to move them, or delete,
-//! recolour, reorder, cut, copy and paste (also into other notes). Tapping the selection
-//! (or empty paper, to paste) asks the window for the context menu with those actions.
+//! recolour, reorder, cut, copy and paste (also into other notes).
+//!
+//! The context menu with those actions (shown by the window) opens differently per input:
+//! the mouse right-clicks anywhere; the stylus, or a finger drawing with the lasso, taps the
+//! selection or holds still anywhere; a finger that pans holds still, or taps the selection
+//! (`touch.rs`). Opened away from the selection it offers Paste, which pastes there.
 //!
 //! While strokes are selected they are left out of the page's ink tiles and drawn from one
 //! texture, rendered once when the selection is made, so dragging costs nothing per frame
@@ -35,6 +39,35 @@ const MIN_STEP_PX: f64 = 2.0;
 const GRAB_MARGIN_PX: f64 = 16.0;
 /// A stylus tap wobbles; moving less than this (logical px) is a tap, not a drag.
 const TAP_SLOP_PX: f64 = 4.0;
+/// Holding the stylus or a finger this still for this long opens the context menu.
+pub const HOLD_TIME: Duration = Duration::from_millis(500);
+/// How far (logical px) a hold may wander. Wider than a tap: a resting pen tip drifts.
+pub const HOLD_SLOP_PX: f64 = 8.0;
+
+/// What last pressed on the canvas; the context menu adapts to it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputSource {
+    #[default]
+    Mouse,
+    Stylus,
+    Touch,
+}
+
+impl InputSource {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => Self::Stylus,
+            2 => Self::Touch,
+            _ => Self::Mouse,
+        }
+    }
+}
+
+/// A press that may become a hold: where it started (widget coordinates) and its timer.
+pub(super) struct Hold {
+    start: (f64, f64),
+    timer: glib::SourceId,
+}
 
 fn accent() -> gdk::RGBA {
     gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
@@ -47,8 +80,6 @@ pub(super) struct LassoPath {
     index: usize,
     points: Vec<(f32, f32)>,
     rect: bool,
-    /// Where it started, in widget coordinates (for a tap's context menu).
-    start: (f64, f64),
 }
 
 /// Strokes drawn into one texture, and the page area (points) it covers.
@@ -141,6 +172,9 @@ impl Canvas {
                 area.contains(p).then(|| s.drag_from = Some(p))
             })
         };
+        if self.imp().input_source.get() != InputSource::Mouse {
+            self.start_hold(x, y);
+        }
         if grab.is_some() {
             return;
         }
@@ -151,7 +185,6 @@ impl Canvas {
                 index,
                 points: vec![p],
                 rect: self.tools().rect_select.get(),
-                start: (x, y),
             });
             self.queue_draw();
         }
@@ -159,6 +192,14 @@ impl Canvas {
 
     pub(super) fn lasso_extend(&self, x: f64, y: f64) {
         let imp = self.imp();
+        let wandered = imp
+            .hold
+            .borrow()
+            .as_ref()
+            .is_some_and(|h| (x - h.start.0).hypot(y - h.start.1) > HOLD_SLOP_PX);
+        if wandered {
+            self.cancel_hold();
+        }
         let min_step = (MIN_STEP_PX / imp.zoom.get()) as f32;
         if let Some(sel) = imp.selection.borrow_mut().as_mut()
             && let Some(from) = sel.drag_from
@@ -185,6 +226,8 @@ impl Canvas {
 
     pub(super) fn lasso_end(&self) {
         let imp = self.imp();
+        self.cancel_hold();
+        let source = imp.input_source.get();
         let dragged = imp.selection.borrow_mut().as_mut().and_then(|s| {
             s.drag_from.take()?;
             Some(std::mem::take(&mut s.offset))
@@ -193,8 +236,11 @@ impl Canvas {
         if let Some(offset) = dragged {
             if offset.0.hypot(offset.1) > slop {
                 self.move_selection(offset);
-            } else if let Some(r) = self.selection_view_rect() {
-                self.emit_context_menu(r);
+            } else if source != InputSource::Mouse
+                && let Some(r) = self.selection_view_rect()
+            {
+                // Tapping the selection; the mouse right-clicks instead.
+                self.emit_context_menu(r, source, false);
             }
             self.queue_draw();
             return;
@@ -205,10 +251,8 @@ impl Canvas {
                 .points
                 .iter()
                 .all(|&(x, y)| (x - x0).hypot(y - y0) <= slop);
-            if tap {
-                let (x, y) = path.start;
-                self.emit_context_menu((x, y, 1.0, 1.0));
-            } else {
+            // A tap on the paper only deselects (done when it began).
+            if !tap {
                 self.select_inside(&path);
             }
             self.queue_draw();
@@ -230,14 +274,71 @@ impl Canvas {
         Some((x0, y0, x1 - x0, y1 - y0))
     }
 
-    /// Asks for the selection's context menu, pointing at `(x, y, width, height)`.
-    pub(super) fn emit_context_menu(&self, (x, y, w, h): (f64, f64, f64, f64)) {
-        self.emit_by_name::<()>("context-menu", &[&x, &y, &w, &h]);
+    /// Asks the window for the context menu, pointing at `(x, y, width, height)`; `point`
+    /// means away from the selection, where Paste would put the strokes.
+    pub(super) fn emit_context_menu(
+        &self,
+        (x, y, w, h): (f64, f64, f64, f64),
+        source: InputSource,
+        point: bool,
+    ) {
+        self.emit_by_name::<()>("context-menu", &[&x, &y, &w, &h, &(source as u32), &point]);
+    }
+
+    /// The context menu for a press at (`x`, `y`): the selection's if it is there (within
+    /// the grab margin), else the paper's.
+    pub fn context_menu_at(&self, x: f64, y: f64, source: InputSource) {
+        match self
+            .selection_view_rect()
+            .filter(|_| self.on_selection(x, y))
+        {
+            Some(r) => self.emit_context_menu(r, source, false),
+            None => self.emit_context_menu((x, y, 1.0, 1.0), source, true),
+        }
+    }
+
+    /// Whether (`x`, `y`) is on the selection (within the grab margin).
+    pub fn on_selection(&self, x: f64, y: f64) -> bool {
+        let m = GRAB_MARGIN_PX;
+        self.selection_view_rect().is_some_and(|(rx, ry, w, h)| {
+            x >= rx - m && x <= rx + w + m && y >= ry - m && y <= ry + h + m
+        })
+    }
+
+    /// Starts timing a press at (`x`, `y`); still there after `HOLD_TIME`, it opens the menu.
+    fn start_hold(&self, x: f64, y: f64) {
+        self.cancel_hold();
+        let weak = self.downgrade();
+        let timer = glib::timeout_add_local_once(HOLD_TIME, move || {
+            let Some(canvas) = weak.upgrade() else { return };
+            let imp = canvas.imp();
+            let Some(hold) = imp.hold.take() else { return };
+            // The press becomes the hold: drop the loop or drag it started.
+            imp.lasso.take();
+            if let Some(s) = imp.selection.borrow_mut().as_mut() {
+                s.drag_from = None;
+                s.offset = (0.0, 0.0);
+            }
+            canvas.queue_draw();
+            let (x, y) = hold.start;
+            canvas.context_menu_at(x, y, imp.input_source.get());
+        });
+        *self.imp().hold.borrow_mut() = Some(Hold {
+            start: (x, y),
+            timer,
+        });
+    }
+
+    fn cancel_hold(&self) {
+        if let Some(h) = self.imp().hold.take() {
+            h.timer.remove();
+        }
     }
 
     /// Drops a half-drawn loop or drag (a touch that turned into a pinch).
     pub(super) fn lasso_cancel(&self) {
         let imp = self.imp();
+        self.cancel_hold();
         imp.lasso.take();
         if let Some(s) = imp.selection.borrow_mut().as_mut() {
             s.drag_from = None;
@@ -516,9 +617,10 @@ impl Canvas {
         }
     }
 
-    /// Pastes the clipboard in the middle of the visible part of the current page and selects
-    /// it. Returns whether there was anything to paste.
-    pub fn paste(&self) -> bool {
+    /// Pastes the clipboard centred on view point `at` (kept on its page), or in the middle
+    /// of the visible part of the current page, and selects it. Returns whether there was
+    /// anything to paste.
+    pub fn paste(&self, at: Option<(f64, f64)>) -> bool {
         let strokes = CLIPBOARD.with(|c| c.borrow().clone());
         let Some(bounds) = strokes.iter().map(|s| s.bounds()).reduce(Rect::union) else {
             return false;
@@ -531,19 +633,30 @@ impl Canvas {
             return false;
         };
         self.clear_selection();
+        let target = at.and_then(|(x, y)| self.page_point(x, y));
         let (index, page, spec, rect) = {
             let doc = imp.doc.borrow();
             let Some(doc) = doc.as_ref() else {
                 return false;
             };
-            let index = (imp.current_page.get() as usize).min(doc.pages.len().saturating_sub(1));
+            let index = target.map_or(
+                (imp.current_page.get() as usize).min(doc.pages.len().saturating_sub(1)),
+                |t| t.0,
+            );
             let (page, spec) = doc.pages[index];
             (index, page, spec, doc.layout.page_rect(index))
         };
-        // Centre of the visible part of the page, kept on the page.
-        let (vx0, vy0, vx1, vy1) = view.visible_pt();
-        let cx = ((vx0.max(rect.x) + vx1.min(rect.x + rect.w)) / 2.0 - rect.x) as f32;
-        let cy = ((vy0.max(rect.y) + vy1.min(rect.y + rect.h)) / 2.0 - rect.y) as f32;
+        // The tapped point, or the centre of the visible part of the page; kept on the page.
+        let (cx, cy) = match target {
+            Some((_, _, p)) => p,
+            None => {
+                let (vx0, vy0, vx1, vy1) = view.visible_pt();
+                (
+                    ((vx0.max(rect.x) + vx1.min(rect.x + rect.w)) / 2.0 - rect.x) as f32,
+                    ((vy0.max(rect.y) + vy1.min(rect.y + rect.h)) / 2.0 - rect.y) as f32,
+                )
+            }
+        };
         let (w, h) = (bounds.x1 - bounds.x0, bounds.y1 - bounds.y0);
         let x0 = (cx - w / 2.0).clamp(0.0, (spec.width - w).max(0.0));
         let y0 = (cy - h / 2.0).clamp(0.0, (spec.height - h).max(0.0));

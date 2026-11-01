@@ -188,7 +188,14 @@ impl CeraWindow {
                 #[upgrade_or_default]
                 move |args| {
                     let v = |i: usize| args[i].get::<f64>().unwrap_or_default();
-                    win.show_context_menu(&canvas, (v(1), v(2), v(3), v(4)));
+                    let source = args[5].get::<u32>().unwrap_or_default();
+                    let point = args[6].get::<bool>().unwrap_or_default();
+                    win.show_context_menu(
+                        &canvas,
+                        (v(1), v(2), v(3), v(4)),
+                        crate::canvas::InputSource::from_u32(source),
+                        point,
+                    );
                     None
                 }
             ),
@@ -367,6 +374,7 @@ impl CeraWindow {
             ("select-none", selection),
             ("arrange", selection),
             ("paste", has_note && crate::canvas::has_clipboard()),
+            ("paste-at", has_note && crate::canvas::has_clipboard()),
         ] {
             self.set_action_enabled(name, enabled);
         }

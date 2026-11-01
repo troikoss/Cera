@@ -7,7 +7,9 @@
 //!   finger landing soon after the first turns a just-started stroke into a pinch.
 //!
 //! Without "draw with finger" touches pass through untouched: the scrolled window pans and
-//! the canvas's own pinch gesture zooms.
+//! the canvas's own pinch gesture zooms. A finger held still opens the lasso's context
+//! menu, and so does a tap on the selection. (Drawing with a finger, the canvas sees taps
+//! and holds itself, like the stylus's.)
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -16,7 +18,7 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{gdk, glib, graphene};
 
-use crate::canvas::Canvas;
+use crate::canvas::{Canvas, HOLD_SLOP_PX, HOLD_TIME, InputSource};
 use crate::settings;
 
 /// A tap: every finger lifted within this long (ms), none moving more than `TAP_SLOP` px.
@@ -47,6 +49,17 @@ struct State {
     moved: bool,
     began: u32,
     mode: Mode,
+    /// A single still finger's timer for the context menu, and whether it went off.
+    hold: Option<glib::SourceId>,
+    held: bool,
+}
+
+impl State {
+    fn cancel_hold(&mut self) {
+        if let Some(id) = self.hold.take() {
+            id.remove();
+        }
+    }
 }
 
 /// The controller for the note overlay; `canvas` gives the canvas of the selected tab.
@@ -57,7 +70,10 @@ pub fn controller(canvas: impl Fn() -> Option<Canvas> + 'static) -> gtk::EventCo
         moved: false,
         began: 0,
         mode: Mode::Idle,
+        hold: None,
+        held: false,
     }));
+    let shared = state.clone();
     let controller = gtk::EventControllerLegacy::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     controller.connect_event(move |c, event| {
@@ -85,11 +101,33 @@ pub fn controller(canvas: impl Fn() -> Option<Canvas> + 'static) -> gtk::EventCo
                 if st.touches.is_empty() {
                     st.most = 0;
                     st.moved = false;
+                    st.held = false;
                     st.began = time;
                     st.mode = Mode::Idle;
                 }
                 st.touches.insert(seq, Touch { start: pos, pos });
                 st.most = st.most.max(st.touches.len());
+                st.cancel_hold();
+                if !draw && st.touches.len() == 1 {
+                    let state = shared.clone();
+                    let canvas = canvas.downgrade();
+                    st.hold = Some(glib::timeout_add_local_once(HOLD_TIME, move || {
+                        let mut st = state.borrow_mut();
+                        st.hold = None;
+                        let still = st.touches.len() == 1 && st.most == 1;
+                        let Some(&Touch { start, pos }) = st.touches.values().next() else {
+                            return;
+                        };
+                        if !still || (pos.0 - start.0).hypot(pos.1 - start.1) > HOLD_SLOP_PX {
+                            return;
+                        }
+                        st.held = true;
+                        drop(st);
+                        if let Some(canvas) = canvas.upgrade() {
+                            canvas.context_menu_at(start.0, start.1, InputSource::Touch);
+                        }
+                    }));
+                }
                 if draw {
                     let n = st.touches.len();
                     st.mode = match (st.mode, n) {
@@ -114,8 +152,12 @@ pub fn controller(canvas: impl Fn() -> Option<Canvas> + 'static) -> gtk::EventCo
             E::TouchUpdate => {
                 if let Some(t) = st.touches.get_mut(&seq) {
                     t.pos = pos;
-                    if (pos.0 - t.start.0).hypot(pos.1 - t.start.1) > TAP_SLOP {
+                    let d = (pos.0 - t.start.0).hypot(pos.1 - t.start.1);
+                    if d > TAP_SLOP {
                         st.moved = true;
+                    }
+                    if d > HOLD_SLOP_PX {
+                        st.cancel_hold();
                     }
                 }
                 match st.mode {
@@ -128,7 +170,8 @@ pub fn controller(canvas: impl Fn() -> Option<Canvas> + 'static) -> gtk::EventCo
                 }
             }
             _ => {
-                st.touches.remove(&seq);
+                let lifted = st.touches.remove(&seq);
+                st.cancel_hold();
                 match st.mode {
                     Mode::Drawing(s) if s == seq => {
                         if kind == E::TouchCancel {
@@ -152,8 +195,16 @@ pub fn controller(canvas: impl Fn() -> Option<Canvas> + 'static) -> gtk::EventCo
                         3 if tap => Some("win.redo"),
                         _ => None,
                     };
+                    // One finger tapping the selection: its menu (unless a hold opened it).
+                    let menu_at = lifted
+                        .filter(|_| tap && !draw && !st.held && st.most == 1)
+                        .map(|t| t.start)
+                        .filter(|&(x, y)| canvas.on_selection(x, y));
                     st.mode = Mode::Idle;
                     drop(st);
+                    if let Some((x, y)) = menu_at {
+                        canvas.context_menu_at(x, y, InputSource::Touch);
+                    }
                     if let Some(action) = action
                         && settings::with(|s| s.finger_taps)
                         && let Some(widget) = c.widget()

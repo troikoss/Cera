@@ -12,12 +12,12 @@ use std::rc::Rc;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use cera_core::Rgba8;
-use gtk::{gdk, glib};
+use gtk::{gdk, gio, glib};
 
 use super::{CeraWindow, rgba};
 use crate::canvas::{
     ERASER_WIDTH_RANGE, HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTH_RANGE,
-    PEN_WIDTH_RANGE, ToolKind,
+    InputSource, PEN_WIDTH_RANGE, ToolKind,
 };
 use crate::settings;
 use crate::swatch::Swatch;
@@ -536,17 +536,60 @@ impl CeraWindow {
 
 impl CeraWindow {
     /// The lasso's actions in a menu pointing at `rect` (canvas coordinates): cut, copy,
-    /// delete and arrange with a selection, paste with something to paste. Disabled entries
-    /// are hidden, so with nothing to act on no menu opens.
+    /// delete and arrange on the selection; paste with something to paste, at `rect` when it
+    /// is a `point` away from the selection. For the mouse it is a compact menu below the
+    /// pointer; for the stylus and fingers it sits above the selection or the press, out
+    /// from under the hand, with taller rows.
     pub(super) fn show_context_menu(
         &self,
         canvas: &crate::canvas::Canvas,
         rect: (f64, f64, f64, f64),
+        source: InputSource,
+        point: bool,
     ) {
-        if !canvas.has_selection() && !crate::canvas::has_clipboard() {
+        let selection = canvas.has_selection() && !point;
+        let paste = crate::canvas::has_clipboard();
+        if !selection && !paste {
             return;
         }
         self.update_note_actions();
+        let menu = gio::Menu::new();
+        let edit = gio::Menu::new();
+        if selection {
+            edit.append(Some("Cu_t"), Some("win.cut"));
+            edit.append(Some("_Copy"), Some("win.copy"));
+        }
+        if paste {
+            if point {
+                let item = gio::MenuItem::new(Some("_Paste"), None);
+                item.set_action_and_target_value(
+                    Some("win.paste-at"),
+                    Some(&(rect.0, rect.1).to_variant()),
+                );
+                edit.append_item(&item);
+            } else {
+                edit.append(Some("_Paste"), Some("win.paste"));
+            }
+        }
+        if selection {
+            edit.append(Some("_Delete"), Some("win.delete-selection"));
+        }
+        menu.append_section(None, &edit);
+        if selection {
+            let arrange = gio::Menu::new();
+            for (label, target) in [
+                ("Bring to _Front", "front"),
+                ("Bring For_ward", "forward"),
+                ("Send Back_ward", "backward"),
+                ("Send to _Back", "back"),
+            ] {
+                let item = gio::MenuItem::new(Some(label), None);
+                item.set_action_and_target_value(Some("win.arrange"), Some(&target.to_variant()));
+                arrange.append_item(&item);
+            }
+            menu.append_section(None, &arrange);
+        }
+
         let imp = self.imp();
         let anchor = &*imp.note_overlay;
         let (x, y, w, h) = rect;
@@ -555,20 +598,27 @@ impl CeraWindow {
         else {
             return;
         };
-        let menu = gtk::PopoverMenu::from_model(Some(&*imp.context_menu));
-        menu.set_position(gtk::PositionType::Top);
-        menu.set_parent(anchor);
-        menu.set_pointing_to(Some(&gdk::Rectangle::new(
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        if source == InputSource::Mouse {
+            popover.set_position(gtk::PositionType::Bottom);
+            popover.set_has_arrow(false);
+            popover.set_halign(gtk::Align::Start);
+        } else {
+            popover.set_position(gtk::PositionType::Top);
+            popover.add_css_class("touch-menu");
+        }
+        popover.set_parent(anchor);
+        popover.set_pointing_to(Some(&gdk::Rectangle::new(
             origin.x() as i32,
             origin.y() as i32,
             (w as i32).max(1),
             (h as i32).max(1),
         )));
-        menu.connect_closed(|m| {
+        popover.connect_closed(|m| {
             let m = m.clone();
             glib::idle_add_local_once(move || m.unparent());
         });
-        menu.popup();
+        popover.popup();
     }
 }
 

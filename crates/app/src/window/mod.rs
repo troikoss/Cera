@@ -69,8 +69,6 @@ mod imp {
         pub size_separator: TemplateChild<gtk::Separator>,
         #[template_child]
         pub size_box: TemplateChild<gtk::Box>,
-        #[template_child]
-        pub context_menu: TemplateChild<gio::MenuModel>,
         pub(super) tool_state: Rc<Tools>,
         pub(super) swatches: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
         pub(super) sizes: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
@@ -289,7 +287,13 @@ impl CeraWindow {
             }),
             canvas_action("delete-selection", Canvas::delete_selection),
             canvas_action("select-none", Canvas::clear_selection),
-            simple("paste", Self::paste),
+            simple("paste", |win| win.paste(None)),
+            gio::ActionEntry::builder("paste-at")
+                .parameter_type(Some(glib::VariantTy::new("(dd)").expect("valid type")))
+                .activate(|win: &Self, _, param| {
+                    win.paste(param.and_then(|p| p.get::<(f64, f64)>()));
+                })
+                .build(),
             simple("add-page", Self::add_page),
             simple("pages", Self::show_pages),
             simple("preferences", Self::show_preferences),
@@ -359,10 +363,11 @@ impl CeraWindow {
         }
     }
 
-    /// Pastes into the selected tab and switches to the lasso to move what was pasted.
-    fn paste(&self) {
+    /// Pastes into the selected tab (centred on view point `at`, else in the middle of the
+    /// view) and switches to the lasso to move what was pasted.
+    fn paste(&self, at: Option<(f64, f64)>) {
         if let Some(canvas) = self.canvas()
-            && canvas.paste()
+            && canvas.paste(at)
         {
             self.imp().tools.set_active_name(Some("lasso"));
         }
