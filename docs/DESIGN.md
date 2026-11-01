@@ -338,7 +338,7 @@ AdwApplicationWindow
       │  └─ pages: AdwToolbarView
       │     ├─ top: AdwHeaderBar [back to files] "Pages" [only bookmarks]
       │     ├─ GtkScrolledWindow > GtkGridView (page thumbnails)
-      │     └─ bottom: [insert ▾] [paper ▾] [to top] [to bottom] [delete]
+      │     └─ bottom: [insert ▾] [paper ▾] [first] [last] [delete]
       └─ content: AdwToolbarView
          ├─ top: AdwHeaderBar [sidebar] [pages] AdwWindowTitle("Lecture 03", "Page 2 of 18")
          │                    [add page] [menu]
@@ -377,8 +377,8 @@ AdwApplicationWindow
   returns to the files, and hiding the sidebar leaves the pages too. The pages view is a
   `GtkGridView` of page thumbnails: tapping one shows that page, and the selection follows
   the note as it scrolls; below it, insert blank before/after, change paper and delete act
-  on the selected page, and two buttons scroll the thumbnails to the top or bottom without
-  moving the note.
+  on the selected page, and two buttons select the first or last page (of the bookmarked
+  ones while filtered), which shows it in the note.
   A right click or a hold on a thumbnail selects it and opens its context menu: insert
   before/after, paper, move earlier/later, bookmark (or remove it) and delete; stylus and
   finger menus sit above the press with tall rows, like the canvas's. Thumbnails are whole-page

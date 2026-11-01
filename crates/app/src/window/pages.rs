@@ -402,9 +402,7 @@ impl CeraWindow {
             s.move_by(p.and_then(|p| p.parse::<i64>().ok()).unwrap_or(0))
         });
         with_sorter("delete", |s, _| s.delete());
-        with_sorter("scroll", |s, p| {
-            s.scroll_to_end(p.as_deref() == Some("bottom"))
-        });
+        with_sorter("go", |s, p| s.select_end(p.as_deref() == Some("last")));
         with_sorter("bookmark", |s, _| s.toggle_bookmark());
         group
     }
@@ -431,7 +429,7 @@ impl CeraWindow {
             ("paper", any),
             ("move", any && several),
             ("delete", any && several),
-            ("scroll", shown),
+            ("go", shown),
         ] {
             if let Some(action) = panel
                 .actions
@@ -493,16 +491,8 @@ fn action_bar() -> gtk::CenterBox {
             .build(),
     );
     let middle = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    middle.append(&button(
-        "go-top-symbolic",
-        "Scroll to top",
-        "pages.scroll::top",
-    ));
-    middle.append(&button(
-        "go-bottom-symbolic",
-        "Scroll to bottom",
-        "pages.scroll::bottom",
-    ));
+    middle.append(&button("go-top-symbolic", "First page", "pages.go::first"));
+    middle.append(&button("go-bottom-symbolic", "Last page", "pages.go::last"));
     let delete = button("user-trash-symbolic", "Delete page", "pages.delete::");
     delete.add_css_class("destructive-action");
     let bar = gtk::CenterBox::new();
@@ -741,19 +731,21 @@ impl Sorter {
             .is_ok_and(|p| p.bookmark().is_some())
     }
 
-    /// Scrolls the thumbnails to the first or last one shown; the note stays where it is.
-    fn scroll_to_end(&self, bottom: bool) {
+    /// Selects the first or last page shown (only bookmarked ones while filtered), which
+    /// shows it in the note, and scrolls its thumbnail into view.
+    fn select_end(&self, last: bool) {
         let count = self.filtered.n_items();
         if count == 0 {
             return;
         }
+        let position = if last { count - 1 } else { 0 };
+        self.selection.set_selected(position);
         if let Some(grid) = self
             .canvas
             .root()
             .and_downcast::<CeraWindow>()
             .and_then(|w| w.imp().pages.get().map(|p| p.grid.clone()))
         {
-            let position = if bottom { count - 1 } else { 0 };
             grid.scroll_to(position, gtk::ListScrollFlags::NONE, None);
         }
     }
