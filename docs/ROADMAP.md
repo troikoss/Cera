@@ -41,6 +41,10 @@ Every add-on waits on the add-on system.
   - [x] Rectangle select (a lasso mode: tap the active lasso)
 - [ ] Photos: insert images onto a page — D4 (first page element; image asset kind, downscale
       on import)
+- [ ] Tool presets: user-made pen-like tools (size, opacity, pressure, tip roundness,
+      highlighter under or over ink, dashed and dotted lines, whole or partial eraser),
+      favourites in the tool bar, any preset as the stylus's secondary action — D3 (stroke
+      style in the ink encoding); plan in [tool-presets.md](tool-presets.md)
 
 ### Toolbar and colours
 
@@ -72,6 +76,8 @@ loaded separately; with none installed, Cera costs nothing extra in RAM or start
   - [ ] Handwriting-aware search (depends on recognition) — D3 once recognition works
 - [ ] Handwriting assists: one add-on for writing aids and handwriting cleanup tools — D2 for
       smoothing and straightening, D4 for real cleanup
+  - [ ] Straight lines as a preset option, with snapping to a configurable angle step —
+        D2 (design in [tool-presets.md](tool-presets.md))
 - [ ] Tables and graphs — D4
 - [ ] Sticky notes — D3 once the element model exists
 - [ ] LaTeX — D4 (embedded typesetter or an installed TeX)
