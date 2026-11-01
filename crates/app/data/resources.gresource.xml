@@ -21,5 +21,9 @@
     <file>icons/scalable/actions/cera-note-symbolic.svg</file>
     <file>icons/scalable/actions/cera-page-add-symbolic.svg</file>
     <file>icons/scalable/actions/cera-pdf-symbolic.svg</file>
+    <file>icons/scalable/actions/cera-select-all-symbolic.svg</file>
+    <file>icons/scalable/actions/cera-select-invert-symbolic.svg</file>
+    <file>icons/scalable/actions/cera-select-before-symbolic.svg</file>
+    <file>icons/scalable/actions/cera-select-after-symbolic.svg</file>
   </gresource>
 </gresources>

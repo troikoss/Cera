@@ -24,7 +24,9 @@ the sidebar, as a view next to the files, with a context menu and a bookmark tog
 thumbnail and a filter for bookmarked pages; the header's bookmarks menu is gone. Add space
 now spills ink pushed off a page onto the next one, which makes room for it, cascading to
 a new page at the end. Checked with injected pointer and key input in the headless
-compositor; yours to test on the tablet.
+compositor; yours to test on the tablet. Pages can be selected in the pages sidebar (a toggle
+on each thumbnail; select all, invert, before, after); checked with mouse input under GTK's
+Broadway backend on the desktop.
 
 ## M0 — Skeleton
 

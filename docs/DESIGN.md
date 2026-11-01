@@ -407,6 +407,15 @@ AdwApplicationWindow
   right corner (faint until set, then accent-coloured), and a header toggle shows only the
   bookmarked pages: a `GtkFilterListModel` over all of them, so grid positions are not page
   numbers and the sorter finds pages by id. Filtered with none set, it shows "No bookmarks".
+- **Page selection** (`window/pages.rs`): each thumbnail has a selection toggle in its top
+  left corner (an empty ring, then a check on the accent colour). Selected pages are a set
+  of page ids in the sorter, apart from the grid's single selection, which stays the current
+  page. While any are selected the header shows how many and the bottom bar holds the
+  selection tools: select all, invert, select the pages before or after the page selected
+  last (if that one was let go: before the last selected page, after the first), and clear.
+  They act on the pages shown; pages that stop being shown (deleted, or hidden by the
+  bookmark filter) are let go. The selection is dropped with the sorter. Nothing acts on it
+  yet.
 - **Import:** drop a PDF on the sidebar/window or use + → Import PDF… → `AdwDialog` with
   `AdwEntryRow` (name), `AdwComboRow` (folder), page range, keep original.
 - **No vault open:** `AdwStatusPage` "Open a vault" with "Open folder" / "Create vault" and a

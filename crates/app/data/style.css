@@ -88,3 +88,20 @@ button.thumb-mark {
 button.thumb-mark.bookmarked {
   color: var(--accent-color);
 }
+
+/* The selection toggle in the other corner: an empty ring until set, then a check on the
+   accent colour. */
+button.thumb-check {
+  min-width: 20px;
+  min-height: 20px;
+  padding: 2px;
+  margin: 2px;
+  border: 2px solid rgb(0 0 0 / 30%);
+  color: transparent;
+}
+
+button.thumb-check.checked {
+  border-color: transparent;
+  background-color: var(--accent-bg-color);
+  color: var(--accent-fg-color);
+}

@@ -22,6 +22,8 @@ Every add-on waits on the add-on system.
 ## Adjustments
 
 - [x] Move the page sorter from its dialog into the sidebar — D2
+- [x] Select pages in the pages sidebar: a toggle on each thumbnail; select all, invert,
+      select before and after — D1 (nothing acts on the selection yet)
 
 ## Core features
 

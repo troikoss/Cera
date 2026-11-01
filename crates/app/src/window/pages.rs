@@ -9,6 +9,10 @@
 //! has a small bookmark toggle in its corner, and a header toggle shows only the bookmarked
 //! pages (a `FilterListModel` over all of them; the grid's positions are then not page
 //! numbers, so pages are always found by id).
+//! A selection toggle in each thumbnail's other corner selects pages (a set of ids, apart from
+//! the grid's own single selection, which is the current page). While any are selected the
+//! bottom bar holds the selection tools instead: select all, invert, and select the pages
+//! before or after the page last selected. Only pages shown can be selected.
 //! The sorter is bound to the selected tab while the view is on screen and dropped, with its
 //! thumbnails, when the view is hidden or the sidebar closes.
 //!
@@ -18,7 +22,7 @@
 //! the note is edited (a short while after the last edit, not per stroke).
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -55,12 +59,16 @@ pub(super) struct PagesPanel {
     actions: gio::SimpleActionGroup,
     /// Show only bookmarked pages; kept across notes.
     only_marks: Rc<Cell<bool>>,
+    title: adw::WindowTitle,
+    /// The page actions, or the selection tools while pages are selected.
+    bars: gtk::Stack,
 }
 
 /// A cell on screen.
 struct BoundCell {
     picture: gtk::Picture,
     mark: gtk::Button,
+    check: gtk::Button,
 }
 
 pub(super) struct Sorter {
@@ -77,6 +85,9 @@ pub(super) struct Sorter {
     filtered: gtk::FilterListModel,
     only_marks: Rc<Cell<bool>>,
     selection: gtk::SingleSelection,
+    /// Pages selected with their toggles, and the one selected last.
+    checked: RefCell<HashSet<PageId>>,
+    anchor: Cell<Option<PageId>>,
     thumbs: RefCell<HashMap<PageId, (gdk::Texture, usize, Version)>>,
     /// Asked-for thumbnails and what they will be drawn from.
     pending: RefCell<HashMap<PageId, Version>>,
@@ -135,6 +146,7 @@ impl CeraWindow {
                 let sorter = win.imp().sorter.borrow().clone();
                 if let Some(sorter) = sorter {
                     sorter.filter.changed(gtk::FilterChange::Different);
+                    sorter.prune_checks();
                     sorter.follow_page(true);
                     win.update_pages_view();
                 }
@@ -146,15 +158,19 @@ impl CeraWindow {
             .tooltip_text("Files")
             .action_name("win.pages")
             .build();
-        let header = adw::HeaderBar::builder()
-            .title_widget(&adw::WindowTitle::new("Pages", ""))
-            .build();
+        let title = adw::WindowTitle::new("Pages", "");
+        let header = adw::HeaderBar::builder().title_widget(&title).build();
         header.pack_start(&back);
         header.pack_end(&filter_button);
+        let bars = gtk::Stack::builder()
+            .transition_type(gtk::StackTransitionType::Crossfade)
+            .build();
+        bars.add_named(&action_bar(), Some("actions"));
+        bars.add_named(&selection_bar(), Some("selection"));
 
         let root = adw::ToolbarView::new();
         root.add_top_bar(&header);
-        root.add_bottom_bar(&action_bar());
+        root.add_bottom_bar(&bars);
         root.set_content(Some(&stack));
         let actions = self.pages_actions();
         root.insert_action_group("pages", Some(&actions));
@@ -165,6 +181,8 @@ impl CeraWindow {
             grid,
             actions,
             only_marks,
+            title,
+            bars,
         });
 
         let pages = gio::ActionEntry::builder("pages")
@@ -300,6 +318,8 @@ impl CeraWindow {
             filtered,
             only_marks,
             selection,
+            checked: RefCell::default(),
+            anchor: Cell::new(None),
             thumbs: RefCell::default(),
             pending: RefCell::default(),
             lru: RefCell::default(),
@@ -404,6 +424,7 @@ impl CeraWindow {
         with_sorter("delete", |s, _| s.delete());
         with_sorter("go", |s, p| s.select_end(p.as_deref() == Some("last")));
         with_sorter("bookmark", |s, _| s.toggle_bookmark());
+        with_sorter("select", |s, p| s.select(p.as_deref()));
         group
     }
 
@@ -411,18 +432,27 @@ impl CeraWindow {
         let Some(panel) = self.imp().pages.get() else {
             return;
         };
-        let (any, several, shown) =
+        let (any, several, shown, checked) =
             self.imp()
                 .sorter
                 .borrow()
                 .as_ref()
-                .map_or((false, false, false), |s| {
+                .map_or((false, false, false, 0), |s| {
                     (
                         s.selected().is_some(),
                         s.store.n_items() > 1,
                         s.filtered.n_items() > 0,
+                        s.checked.borrow().len(),
                     )
                 });
+        panel
+            .bars
+            .set_visible_child_name(if checked > 0 { "selection" } else { "actions" });
+        panel.title.set_subtitle(&if checked > 0 {
+            format!("{checked} selected")
+        } else {
+            String::new()
+        });
         for (name, enabled) in [
             ("insert", any),
             ("bookmark", any),
@@ -430,6 +460,7 @@ impl CeraWindow {
             ("move", any && several),
             ("delete", any && several),
             ("go", shown),
+            ("select", shown),
         ] {
             if let Some(action) = panel
                 .actions
@@ -466,15 +497,6 @@ fn action_bar() -> gtk::CenterBox {
     ] {
         paper_menu.append(Some(label), Some(&format!("pages.paper::{kind}")));
     }
-    // Detailed names ("pages.move::1") set the action's target too.
-    let button = |icon: &str, tooltip: &str, action: &str| {
-        let button = gtk::Button::builder()
-            .icon_name(icon)
-            .tooltip_text(tooltip)
-            .build();
-        button.set_detailed_action_name(action);
-        button
-    };
     let left = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     left.append(
         &gtk::MenuButton::builder()
@@ -491,14 +513,72 @@ fn action_bar() -> gtk::CenterBox {
             .build(),
     );
     let middle = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    middle.append(&button("go-top-symbolic", "First page", "pages.go::first"));
-    middle.append(&button("go-bottom-symbolic", "Last page", "pages.go::last"));
-    let delete = button("user-trash-symbolic", "Delete page", "pages.delete::");
+    middle.append(&bar_button(
+        "go-top-symbolic",
+        "First page",
+        "pages.go::first",
+    ));
+    middle.append(&bar_button(
+        "go-bottom-symbolic",
+        "Last page",
+        "pages.go::last",
+    ));
+    let delete = bar_button("user-trash-symbolic", "Delete page", "pages.delete::");
     delete.add_css_class("destructive-action");
+    bar(&left, &middle, &delete)
+}
+
+/// Select all, invert, select before or after the page selected last, and clear.
+fn selection_bar() -> gtk::CenterBox {
+    let left = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    left.append(&bar_button(
+        "cera-select-all-symbolic",
+        "Select all",
+        "pages.select::all",
+    ));
+    left.append(&bar_button(
+        "cera-select-invert-symbolic",
+        "Invert selection",
+        "pages.select::invert",
+    ));
+    let middle = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    middle.append(&bar_button(
+        "cera-select-before-symbolic",
+        "Select pages before",
+        "pages.select::before",
+    ));
+    middle.append(&bar_button(
+        "cera-select-after-symbolic",
+        "Select pages after",
+        "pages.select::after",
+    ));
+    let clear = bar_button(
+        "window-close-symbolic",
+        "Clear selection",
+        "pages.select::none",
+    );
+    bar(&left, &middle, &clear)
+}
+
+/// A button of the bottom bar. Detailed names ("pages.move::1") set the action's target too.
+fn bar_button(icon: &str, tooltip: &str, action: &str) -> gtk::Button {
+    let button = gtk::Button::builder()
+        .icon_name(icon)
+        .tooltip_text(tooltip)
+        .build();
+    button.set_detailed_action_name(action);
+    button
+}
+
+fn bar(
+    start: &impl IsA<gtk::Widget>,
+    center: &impl IsA<gtk::Widget>,
+    end: &impl IsA<gtk::Widget>,
+) -> gtk::CenterBox {
     let bar = gtk::CenterBox::new();
-    bar.set_start_widget(Some(&left));
-    bar.set_center_widget(Some(&middle));
-    bar.set_end_widget(Some(&delete));
+    bar.set_start_widget(Some(start));
+    bar.set_center_widget(Some(center));
+    bar.set_end_widget(Some(end));
     bar.set_margin_top(6);
     bar.set_margin_bottom(6);
     bar.set_margin_start(6);
@@ -546,11 +626,30 @@ impl Sorter {
                     }
                 }
             ));
+            // And a selection toggle in the top left corner.
+            let check = gtk::Button::builder()
+                .icon_name("object-select-symbolic")
+                .halign(gtk::Align::Start)
+                .valign(gtk::Align::Start)
+                .css_classes(["flat", "circular", "thumb-check"])
+                .build();
+            check.connect_clicked(glib::clone!(
+                #[weak]
+                item,
+                #[strong]
+                weak,
+                move |_| {
+                    if let (Some(sorter), Some(id)) = (weak.upgrade(), page_of(&item)) {
+                        sorter.toggle_check(id);
+                    }
+                }
+            ));
             let thumb = gtk::Overlay::builder()
                 .child(&picture)
                 .halign(gtk::Align::Center)
                 .build();
             thumb.add_overlay(&mark);
+            thumb.add_overlay(&check);
             let label = gtk::Label::builder().css_classes(["caption"]).build();
             let cell = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
@@ -581,6 +680,10 @@ impl Sorter {
                 .next_sibling()
                 .and_downcast::<gtk::Button>()
                 .expect("bookmark toggle");
+            let check = mark
+                .next_sibling()
+                .and_downcast::<gtk::Button>()
+                .expect("selection toggle");
             let label = thumb
                 .next_sibling()
                 .and_downcast::<gtk::Label>()
@@ -588,7 +691,15 @@ impl Sorter {
             let index = sorter.note.borrow().doc.page_index(id).unwrap_or(0);
             label.set_label(&(index + 1).to_string());
             show_mark(&mark, sorter.is_bookmarked(id));
-            sorter.bind(id, BoundCell { picture, mark });
+            show_check(&check, sorter.checked.borrow().contains(&id));
+            sorter.bind(
+                id,
+                BoundCell {
+                    picture,
+                    mark,
+                    check,
+                },
+            );
         });
         let weak = Rc::downgrade(self);
         factory.connect_unbind(move |_, item| {
@@ -693,6 +804,7 @@ impl Sorter {
             self.syncing.set(true);
             self.store.splice(0, self.store.n_items(), &items);
             self.syncing.set(false);
+            self.prune_checks();
         }
         self.select_quietly(self.canvas.current_page());
     }
@@ -774,10 +886,101 @@ impl Sorter {
         }
         if self.only_marks.get() {
             self.filter.changed(gtk::FilterChange::Different);
+            self.prune_checks();
             self.follow_page(true);
         }
         if let Some(win) = self.canvas.root().and_downcast::<CeraWindow>() {
             win.update_pages_view();
+        }
+    }
+
+    /// The pages shown, in order.
+    fn shown(&self) -> Vec<PageId> {
+        (0..self.filtered.n_items())
+            .filter_map(|i| {
+                self.filtered
+                    .item(i)
+                    .and_downcast::<glib::BoxedAnyObject>()
+                    .map(|b| *b.borrow::<PageId>())
+            })
+            .collect()
+    }
+
+    fn toggle_check(&self, id: PageId) {
+        let on = !self.checked.borrow_mut().remove(&id);
+        if on {
+            self.checked.borrow_mut().insert(id);
+            self.anchor.set(Some(id));
+        }
+        self.checks_changed();
+    }
+
+    /// Selects all pages shown, inverts the selection, or adds the pages before or after the
+    /// one selected last (if that one was let go, before the last selected page or after the
+    /// first); anything else clears it.
+    fn select(&self, how: Option<&str>) {
+        let shown = self.shown();
+        {
+            let mut checked = self.checked.borrow_mut();
+            match how {
+                Some("all") => checked.extend(&shown),
+                Some("invert") => {
+                    for id in shown {
+                        if !checked.remove(&id) {
+                            checked.insert(id);
+                        }
+                    }
+                }
+                Some(side @ ("before" | "after")) => {
+                    let after = side == "after";
+                    let index: HashMap<PageId, usize> =
+                        shown.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+                    let anchor = self
+                        .anchor
+                        .get()
+                        .filter(|a| checked.contains(a))
+                        .and_then(|a| index.get(&a).copied())
+                        .or_else(|| {
+                            let at = checked.iter().filter_map(|id| index.get(id).copied());
+                            if after { at.min() } else { at.max() }
+                        });
+                    let Some(anchor) = anchor else { return };
+                    let range = if after {
+                        &shown[anchor..]
+                    } else {
+                        &shown[..=anchor]
+                    };
+                    checked.extend(range);
+                }
+                _ => checked.clear(),
+            }
+        }
+        self.checks_changed();
+    }
+
+    /// Lets go of selected pages that are no longer shown: deleted, or filtered out.
+    fn prune_checks(&self) {
+        if self.checked.borrow().is_empty() {
+            return;
+        }
+        let shown: HashSet<PageId> = self.shown().into_iter().collect();
+        let before = self.checked.borrow().len();
+        self.checked.borrow_mut().retain(|id| shown.contains(id));
+        if self.checked.borrow().len() != before {
+            self.checks_changed();
+        }
+    }
+
+    /// After the selection changed: the toggles on screen, and the bottom bar.
+    fn checks_changed(&self) {
+        {
+            let checked = self.checked.borrow();
+            for (id, cell) in self.bound.borrow().iter() {
+                show_check(&cell.check, checked.contains(id));
+            }
+        }
+        if let Some(win) = self.canvas.root().and_downcast::<CeraWindow>() {
+            win.update_pages_actions();
         }
     }
 
@@ -1112,6 +1315,18 @@ fn show_mark(mark: &gtk::Button, on: bool) {
     } else {
         mark.remove_css_class("bookmarked");
         mark.set_tooltip_text(Some("Bookmark"));
+    }
+}
+
+/// The selection toggle shows whether the page is selected: an empty ring, or a check on the
+/// accent colour.
+fn show_check(check: &gtk::Button, on: bool) {
+    if on {
+        check.add_css_class("checked");
+        check.set_tooltip_text(Some("Deselect"));
+    } else {
+        check.remove_css_class("checked");
+        check.set_tooltip_text(Some("Select"));
     }
 }
 
