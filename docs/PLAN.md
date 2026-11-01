@@ -7,10 +7,12 @@ How we get from an empty repo to a daily-usable app. Architecture and reasoning 
 tablet; the next milestone starts after your feedback. Each milestone ends with something you
 can run, plus a short "test on the tablet" list.
 
-**Status:** M0–M3 done and tested on the tablet. M4 implemented; the scripted demo runs on the
-tablet, waiting for your stylus test. M5–M7 implemented and their tests pass on the tablet;
-waiting for your hands-on test. Still to record: the M1 stylus log and renderer choice. The
-Flatpak manifest is written but not yet built (no flatpak-builder here).
+**Status:** M0–M7 implemented. M0–M3 tested by you on the tablet. M4–M7 checked on the tablet
+with real pointer, keyboard and touch input injected into a headless compositor
+(`tools/headless`): drawing, two-/three-finger undo/redo, pinch, draw with finger, lasso
+(select, move, recolour, copy, paste, delete, undo), sidebar rename and Move To, search,
+import, tool and palette popovers, page sorter. The Flatpak builds against GNOME 51 and runs.
+Still yours to do: the stylus (it can't be injected) and a day of real use; the M1 stylus log.
 
 ## M0 — Skeleton
 
@@ -36,11 +38,12 @@ Record baseline RSS (`grep -E 'Rss|Pss' /proc/$(pidof cera)/smaps_rollup`).
       `DeviceToolType`, button mask, backlog length per motion event, event timestamps
 - [x] Touch: log touch sequences separately; check the stylus never arrives as touch
 - [x] Draw raw polylines (width from pressure) to eyeball latency
-- [ ] Try `GSK_RENDERER=gl`, `vulkan`, `cairo` and note frame times (GTK 4.18 removed the old GL
-      renderer and renamed `ngl` to `gl`). Memory so far (2026-11-01, 324-page note, scripted
-      demo): Vulkan 165 MiB RSS, GL 275 MiB, cairo 139 MiB. Frame times still need the window
-      in front: `CERA_DEBUG=1 CERA_DEBUG_DEMO=1 GSK_RENDERER=… cera note.cera` now ends with a
-      5 s scroll and logs the overlay's numbers.
+- [x] Try `GSK_RENDERER=gl`, `vulkan`, `cairo` and note frame times (GTK 4.18 removed the old GL
+      renderer and renamed `ngl` to `gl`). Tablet, 2026-11-01, `tools/headless/bench.sh` (headless
+      mutter at 2560 × 1600 on the real GPU, 5 s scroll at 4000 px/s through 8 pages of the
+      324-page note; CPU time per frame from the debug overlay): **Vulkan** 2.2–3.0 ms avg,
+      ≤ 19 ms max, 298 MiB RSS; **GL** ~2.5 ms but 349 MiB and a 165 ms stall on the first frame;
+      **cairo** ~11 ms, over the 8 ms budget. Keep Vulkan, GTK's default.
 
 Run: `cargo run -p cera --release --example stylus` (flags in the file header). Each pen-up
 logs and shows a stroke summary: rates, backlog, pressure/tilt, handler and paint time,
@@ -174,8 +177,9 @@ finger" and write, then pinch.
 - [x] Vector PDF export: cairo `PdfSurface`, Poppler `render_for_printing`, strokes as paths
       (main menu or Ctrl+E; `cera-cli export`)
 - [x] PNG export of the current page at 216 dpi (Ctrl+Shift+E; `cera-cli png`)
-- [x] Flatpak manifest (GNOME 50 runtime, Poppler built in) for x86_64 and aarch64:
-      `build-aux/io.github.troikoss.Cera.yml`
+- [x] Flatpak manifest (GNOME 51 runtime, Poppler 26.10 built in) for x86_64 and aarch64:
+      `build-aux/io.github.troikoss.Cera.yml`; built, installed and run on x86_64 (35 MB export,
+      7.5 MB installed, 136 MiB RSS with a note open)
 - [x] `.desktop` file, AppStream metainfo, MIME type for `.cera`, app icon; `build-aux/install.sh`
       installs them with the binary into `~/.local` (or `PREFIX`)
 - [x] Licence headers (SPDX) / `COPYING` (GPL-3.0-or-later), README

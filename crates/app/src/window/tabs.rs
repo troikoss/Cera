@@ -203,8 +203,10 @@ impl CeraWindow {
         self.update_stack();
         self.schedule_workspace_save();
         if std::env::var_os("CERA_DEBUG_DEMO").is_some() {
+            // Full screen for comparable frame times.
+            self.maximize();
             let weak = canvas.downgrade();
-            glib::timeout_add_local_once(Duration::from_millis(800), move || {
+            glib::timeout_add_local_once(Duration::from_millis(1500), move || {
                 if let Some(canvas) = weak.upgrade() {
                     canvas.run_demo();
                 }

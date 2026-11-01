@@ -417,6 +417,7 @@ impl Canvas {
     }
 
     pub fn undo(&self) {
+        tracing::debug!("undo");
         self.step_history(|note| {
             let crate::note::Note { history, doc, .. } = note;
             history.undo(doc)
@@ -424,6 +425,7 @@ impl Canvas {
     }
 
     pub fn redo(&self) {
+        tracing::debug!("redo");
         self.step_history(|note| {
             let crate::note::Note { history, doc, .. } = note;
             history.redo(doc)

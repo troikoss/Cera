@@ -2,14 +2,17 @@
 #
 # Flatpak manifest, for x86_64 and aarch64 alike. Build and install locally with:
 #
-#   flatpak install flathub org.gnome.Sdk//50 org.freedesktop.Sdk.Extension.rust-stable
+#   flatpak install flathub org.gnome.Sdk//51 org.freedesktop.Sdk.Extension.rust-stable//26.08
 #   flatpak-builder --user --install --force-clean build-dir build-aux/io.github.troikoss.Cera.yml
+#
+# flatpak-builder needs appstream-compose on the host (Ubuntu: appstream-compose; Fedora has it
+# in appstream).
 #
 # Cargo downloads crates during the build (--share=network), which local builds allow. A
 # Flathub submission would vendor them instead (flatpak-cargo-generator.py → cargo-sources.json).
 id: io.github.troikoss.Cera
 runtime: org.gnome.Platform
-runtime-version: '50'
+runtime-version: '51'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -54,7 +57,8 @@ modules:
     sources:
       - type: git
         url: https://gitlab.freedesktop.org/poppler/poppler.git
-        tag: poppler-26.01.0
+        tag: poppler-26.10.0
+        commit: 2703be11769c1f86f4d0dc3b276ec94bba5ac6d3
   - name: cera
     buildsystem: simple
     build-options:

@@ -259,9 +259,11 @@ impl CeraWindow {
             }),
             canvas_action("undo", Canvas::undo),
             canvas_action("redo", Canvas::redo),
-            canvas_action("cut", Canvas::cut_selection),
-            canvas_action("copy", |c| {
-                c.copy_selection();
+            simple("cut", |win| win.clipboard(Canvas::cut_selection)),
+            simple("copy", |win| {
+                win.clipboard(|c| {
+                    c.copy_selection();
+                })
             }),
             canvas_action("delete-selection", Canvas::delete_selection),
             canvas_action("select-none", Canvas::clear_selection),
@@ -312,6 +314,14 @@ impl CeraWindow {
             controller.add_shortcut(shortcut);
         }
         self.add_controller(controller);
+    }
+
+    /// Cut or copy; afterwards Paste is available in every tab.
+    fn clipboard(&self, f: impl FnOnce(&Canvas)) {
+        if let Some(canvas) = self.canvas() {
+            f(&canvas);
+            self.update_note_actions();
+        }
     }
 
     /// Pastes into the selected tab and switches to the lasso to move what was pasted.

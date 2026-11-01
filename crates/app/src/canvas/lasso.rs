@@ -223,6 +223,11 @@ impl Canvas {
                 .map(|(i, _)| i)
                 .collect()
         };
+        tracing::debug!(
+            points = path.points.len(),
+            selected = indices.len(),
+            "lasso"
+        );
         if !indices.is_empty() {
             self.select(path.page, indices);
         }

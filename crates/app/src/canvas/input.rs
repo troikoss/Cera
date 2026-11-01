@@ -581,7 +581,8 @@ impl Canvas {
         let from = adj.value();
         self.add_tick_callback(move |canvas, clock| {
             let now = clock.frame_time();
-            let t0 = *start.get().get_or_insert(now);
+            let t0 = start.get().unwrap_or(now);
+            start.set(Some(t0));
             let seconds = (now - t0) as f64 / 1e6;
             adj.set_value(from + seconds * 4000.0);
             if seconds >= 5.0 || adj.value() >= adj.upper() - adj.page_size() {

@@ -101,16 +101,35 @@ impl CeraApplication {
                         return;
                     };
                     let unit = value.type_() == glib::VariantTy::BOOLEAN;
+                    // "window.toggle-maximized" and the like pass through as they are.
+                    let name = if name.contains('.') {
+                        name
+                    } else {
+                        format!("win.{name}")
+                    };
                     if let Some(window) = app.active_window() {
-                        let _ = WidgetExt::activate_action(
-                            &window,
-                            &format!("win.{name}"),
-                            (!unit).then_some(&value),
-                        );
+                        let _ =
+                            WidgetExt::activate_action(&window, &name, (!unit).then_some(&value));
                     }
                 })
                 .build();
-            self.add_action_entries([win]);
+            // Saves the active window (with its dialogs, not popovers) as a PNG, so scripted
+            // checks can see the result.
+            let screenshot = gio::ActionEntry::builder("screenshot")
+                .parameter_type(Some(glib::VariantTy::STRING))
+                .activate(|app: &Self, _, param| {
+                    let (Some(path), Some(window)) =
+                        (param.and_then(|p| p.get::<String>()), app.active_window())
+                    else {
+                        return;
+                    };
+                    match screenshot(&window, &path) {
+                        Ok(()) => tracing::info!(path, "saved screenshot"),
+                        Err(e) => tracing::warn!(path, "cannot save screenshot: {e}"),
+                    }
+                })
+                .build();
+            self.add_action_entries([win, screenshot]);
         }
 
         self.set_accels_for_action("app.quit", &["<Control>q"]);
@@ -140,4 +159,22 @@ impl CeraApplication {
             .build();
         dialog.present(self.active_window().as_ref());
     }
+}
+
+fn screenshot(window: &gtk::Window, path: &str) -> anyhow::Result<()> {
+    let (w, h) = (f64::from(window.width()), f64::from(window.height()));
+    let paintable = gtk::WidgetPaintable::new(Some(window));
+    let snapshot = gtk::Snapshot::new();
+    paintable.snapshot(&snapshot, w, h);
+    let node = snapshot
+        .to_node()
+        .ok_or_else(|| anyhow::anyhow!("nothing drawn"))?;
+    let renderer = window
+        .renderer()
+        .ok_or_else(|| anyhow::anyhow!("window not realized"))?;
+    let bounds = gtk::graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
+    renderer
+        .render_texture(&node, Some(&bounds))
+        .save_to_png(path)?;
+    Ok(())
 }

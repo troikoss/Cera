@@ -363,13 +363,15 @@ Measured baseline (release build, window open on the "Open a vault" page, idle):
 | Galaxy Tab S9 Wi-Fi, Fedora 44, GNOME Wayland, Vulkan (Turnip) | 120 MiB | 59 MiB | M0, 2026-11-01; 43 MiB of the PSS is anonymous memory, much of it likely the Vulkan driver |
 | Galaxy Tab S9, vault open, no note | 134 MiB | 77 MiB | M5, 2026-11-01: baseline + 14 MiB (budget + 20) |
 | Galaxy Tab S9, two tabs, 324-page note shown | 158 MiB | 100 MiB | M5, 2026-11-01; the hidden tab holds no tiles |
+| Galaxy Tab S9, 5 s fast scroll through the 324-page note, Vulkan | 298 MiB | — | 2026-11-01, headless mutter at 2560 × 1600: baseline + 178 MiB (budget + 200); GL 349 MiB, cairo 267 MiB |
 
 How we check:
 
 - `CERA_DEBUG=1` overlay: tile count / bytes per layer, worker queue length, frame time.
 - `/proc/<pid>/smaps_rollup` and `heaptrack` on the tablet for each milestone.
-- Try `GSK_RENDERER=gl`, `vulkan` and `cairo` on the tablet's Mesa driver and keep the best as
-  the documented default. (GTK 4.18 removed the old GL renderer; `ngl` is now called `gl`.)
+- Renderers on the tablet's Mesa driver (`tools/headless/bench.sh`): Vulkan (GTK's default) is
+  the documented choice, ~2.5 ms of CPU per frame while scrolling and the least memory of the
+  GPU renderers; GL is as fast but uses ~50 MiB more; cairo takes ~11 ms per frame.
 
 ## 11. Plan
 

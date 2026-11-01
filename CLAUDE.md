@@ -37,6 +37,7 @@ crates/app      GTK/libadwaita UI: window, vault sidebar, canvas widget, input
 crates/cli      cera-cli: import / info / compact / export / png (testing aid)
 docs/           DESIGN.md, PLAN.md
 build-aux/      install.sh, Flatpak manifest (desktop file, metainfo, icons live in crates/app/data)
+tools/headless/ scripted real-input checks and renderer benchmark in a headless mutter
 ```
 
 Keep GTK types out of `core`. Poppler objects aren't `Send`: each render worker opens its own
@@ -69,9 +70,12 @@ cargo build --release -p cera && build-aux/install.sh    # install into ~/.local
 flatpak-builder --user --install --force-clean build-dir build-aux/io.github.troikoss.Cera.yml
 ```
 
-UI checks without a stylus or a display of your own: run `gtk4-broadwayd :5`, start the app with
-`GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 GDK_DEBUG=no-portals` and open `http://localhost:8085`.
-With `CERA_DEBUG=1`, window actions can be run over D-Bus (`app.win`, see `application.rs`).
+Scripted checks with real input, on the tablet over SSH: `tools/headless/session.sh start`
+runs Cera in a private headless mutter (own D-Bus and Wayland display, real GPU, nothing on
+screen); `tools/headless/run.sh '<steps>'` injects pointer, keys and touch through mutter's
+RemoteDesktop API and saves screenshots (see `drive.py`); `tools/headless/bench.sh note.cera`
+compares renderers. The stylus can't be injected. With `CERA_DEBUG=1` the app also has
+`app.win` (run any window action over D-Bus) and `app.screenshot`.
 
 All four of fmt, clippy, test and a successful build must pass before a commit.
 

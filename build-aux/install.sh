@@ -36,6 +36,11 @@ for entry in $files; do
     fi
 done
 
+# Flatpak builds export these files and build the caches themselves.
+if [ -n "${FLATPAK_ID:-}" ]; then
+    exit 0
+fi
+
 # Refresh the caches that list MIME types, apps and icons; harmless where the tools are missing.
 if command -v update-mime-database >/dev/null 2>&1; then
     update-mime-database "$PREFIX/share/mime" || true
