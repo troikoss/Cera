@@ -312,7 +312,7 @@ Code: `crates/render/src/export.rs`, `page.rs`. The main thread collects every p
 
 ## 9. UI
 
-Widget tree. Main window: vault tree on the left; header bar with title and page counter; pages on a grey canvas; floating pill tool bar at the bottom centre.
+Widget tree. Main window: vault tree on the left; header bar with title and page counter; pages on a grey canvas; floating pill tool bar at the bottom centre (or along the top, left or right edge, a preference); it scrolls when the window is too small for it.
 
 ```
 AdwApplicationWindow

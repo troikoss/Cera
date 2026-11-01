@@ -28,6 +28,10 @@ label.debug-overlay {
   padding: 4px 8px;
 }
 
+.toolbar-pill .toolbar-content.vertical {
+  padding: 8px 4px;
+}
+
 .toolbar-pill button,
 .toolbar-pill toggle {
   min-width: 40px;
@@ -36,8 +40,16 @@ label.debug-overlay {
   border-radius: 999px;
 }
 
-.toolbar-pill separator {
+/* Separators between the groups, and between the tools inside the toggle group (those
+   carry the group's orientation class, not their own). */
+.toolbar-content > separator.vertical,
+.toolbar-pill toggle-group > separator {
   margin: 8px 2px;
+}
+
+.toolbar-content > separator.horizontal,
+.toolbar-pill toggle-group.vertical > separator {
+  margin: 2px 8px;
 }
 
 /* The context menu opened by the stylus or a finger: taller rows, easier to hit. */

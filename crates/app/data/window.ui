@@ -175,17 +175,10 @@
                               <object class="AdwTabView" id="tab_view"/>
                             </property>
                             <!-- Floating tool bar; swatch buttons are added in window code.
-                                 It scrolls sideways when the window is too narrow for it. -->
+                                 It scrolls when the window is too small for it. -->
                             <child type="overlay">
-                              <object class="GtkScrolledWindow">
-                                <property name="halign">center</property>
-                                <property name="valign">end</property>
-                                <property name="margin-bottom">18</property>
-                                <property name="margin-start">12</property>
-                                <property name="margin-end">12</property>
-                                <property name="hscrollbar-policy">automatic</property>
-                                <property name="vscrollbar-policy">never</property>
-                                <property name="propagate-natural-width">True</property>
+                              <!-- Placed along a window edge by `place_toolbar`. -->
+                              <object class="GtkScrolledWindow" id="toolbar_scroll">
                                 <style>
                                   <class name="toolbar-pill"/>
                                 </style>

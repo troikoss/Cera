@@ -27,6 +27,8 @@ pub struct Settings {
     pub eraser_widths: Vec<f32>,
     pub color_slots: usize,
     pub size_slots: usize,
+    /// Which window edge the floating tool bar sits on.
+    pub toolbar_position: ToolbarPosition,
     /// The current widths.
     pub pen_width: f32,
     pub highlighter_width: f32,
@@ -41,6 +43,35 @@ pub struct Settings {
     pub tile_budget_mib: u32,
 }
 
+/// The window edge the tool bar floats along.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolbarPosition {
+    #[default]
+    Bottom,
+    Top,
+    Left,
+    Right,
+}
+
+impl ToolbarPosition {
+    /// In the order the preferences list them.
+    pub const ALL: [Self; 4] = [Self::Bottom, Self::Top, Self::Left, Self::Right];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bottom => "Bottom",
+            Self::Top => "Top",
+            Self::Left => "Left",
+            Self::Right => "Right",
+        }
+    }
+
+    pub fn is_vertical(self) -> bool {
+        matches!(self, Self::Left | Self::Right)
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -52,6 +83,7 @@ impl Default for Settings {
             eraser_widths: ERASER_WIDTHS.to_vec(),
             color_slots: 3,
             size_slots: 3,
+            toolbar_position: ToolbarPosition::Bottom,
             pen_width: PEN_WIDTHS[1],
             highlighter_width: HIGHLIGHTER_WIDTHS[1],
             eraser_width: ERASER_WIDTHS[1],
@@ -142,6 +174,18 @@ mod tests {
         assert_eq!(s.pen_widths, PEN_WIDTHS);
         assert_eq!((s.color_slots, s.size_slots), (3, 3));
         assert_eq!(s.pen_width, 2.0);
+        assert_eq!(s.toolbar_position, ToolbarPosition::Bottom);
+    }
+
+    #[test]
+    fn toolbar_position_round_trips() {
+        let s = Settings {
+            toolbar_position: ToolbarPosition::Left,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""toolbar_position":"left""#), "{json}");
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), s);
     }
 
     #[test]

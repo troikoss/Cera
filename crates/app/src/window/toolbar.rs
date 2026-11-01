@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The floating tool bar (DESIGN.md §9): tools, colour swatches, size slots and "add page"
-//! (the lasso's actions are in the canvas's context menu, `show_context_menu`). How many swatches and size slots it shows is a preference; the
+//! The floating tool bar (DESIGN.md §9): tools, colour swatches, size slots, undo and redo
+//! (the lasso's actions are in the canvas's context menu, `show_context_menu`). Which window
+//! edge it sits on and how many swatches and size slots it shows are preferences; the
 //! eraser has size slots but no swatches. Tapping the active pen again opens its pressure
 //! setting, the active lasso its shape (free loop or rectangle); tapping the selected swatch
 //! again opens the palette and colour wheel for that slot, the selected size slot a slider.
@@ -19,7 +20,7 @@ use crate::canvas::{
     ERASER_WIDTH_RANGE, HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTH_RANGE,
     InputSource, PEN_WIDTH_RANGE, ToolKind,
 };
-use crate::settings;
+use crate::settings::{self, ToolbarPosition};
 use crate::swatch::Swatch;
 use crate::wheel::ColorWheel;
 
@@ -102,7 +103,55 @@ impl CeraWindow {
             }
         ));
         imp.tools.add_controller(reclick);
+        self.place_toolbar();
         self.rebuild_slots();
+    }
+
+    /// Puts the tool bar on the window edge the preferences ask for, laid out along it.
+    pub(super) fn place_toolbar(&self) {
+        let imp = self.imp();
+        let position = settings::with(|s| s.toolbar_position);
+        let vertical = position.is_vertical();
+        let scroll = &*imp.toolbar_scroll;
+        let (halign, valign) = match position {
+            ToolbarPosition::Bottom => (gtk::Align::Center, gtk::Align::End),
+            ToolbarPosition::Top => (gtk::Align::Center, gtk::Align::Start),
+            ToolbarPosition::Left => (gtk::Align::Start, gtk::Align::Center),
+            ToolbarPosition::Right => (gtk::Align::End, gtk::Align::Center),
+        };
+        scroll.set_halign(halign);
+        scroll.set_valign(valign);
+        // 18 px off its own edge, at least 12 px off the two beside it.
+        let margin = |edge| if edge == position { 18 } else { 12 };
+        scroll.set_margin_bottom(margin(ToolbarPosition::Bottom));
+        scroll.set_margin_top(margin(ToolbarPosition::Top));
+        scroll.set_margin_start(margin(ToolbarPosition::Left));
+        scroll.set_margin_end(margin(ToolbarPosition::Right));
+        // Only along the bar: it keeps its natural length when there is room, else scrolls.
+        let (along, across) = (gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        if vertical {
+            scroll.set_policy(across, along);
+        } else {
+            scroll.set_policy(along, across);
+        }
+        scroll.set_propagate_natural_width(!vertical);
+        scroll.set_propagate_natural_height(vertical);
+
+        let (orientation, across) = if vertical {
+            (gtk::Orientation::Vertical, gtk::Orientation::Horizontal)
+        } else {
+            (gtk::Orientation::Horizontal, gtk::Orientation::Vertical)
+        };
+        imp.toolbar.set_orientation(orientation);
+        let mut child = imp.toolbar.first_child();
+        while let Some(c) = child {
+            if let Some(sep) = c.downcast_ref::<gtk::Separator>() {
+                sep.set_orientation(across);
+            } else if let Some(o) = c.dynamic_cast_ref::<gtk::Orientable>() {
+                o.set_orientation(orientation);
+            }
+            child = c.next_sibling();
+        }
     }
 
     /// Creates the colour swatches and size slots, as many as the preferences ask for.
@@ -730,10 +779,17 @@ fn popover_box(orientation: gtk::Orientation) -> gtk::Box {
 }
 
 /// A popover above `anchor`, removed once closed.
+/// A popover from the tool bar, opening away from the window edge the bar sits on.
 fn popup(content: &impl IsA<gtk::Widget>, anchor: &impl IsA<gtk::Widget>) -> gtk::Popover {
+    let side = match settings::with(|s| s.toolbar_position) {
+        ToolbarPosition::Bottom => gtk::PositionType::Top,
+        ToolbarPosition::Top => gtk::PositionType::Bottom,
+        ToolbarPosition::Left => gtk::PositionType::Right,
+        ToolbarPosition::Right => gtk::PositionType::Left,
+    };
     let popover = gtk::Popover::builder()
         .child(content)
-        .position(gtk::PositionType::Top)
+        .position(side)
         .build();
     popover.set_parent(anchor);
     popover.connect_closed(|p| {

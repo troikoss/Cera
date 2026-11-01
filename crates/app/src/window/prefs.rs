@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Preferences (paper for new notes in this vault, the tool bar's slots, touch gestures, tile
+//! Preferences (paper for new notes in this vault, the tool bar's position and slots, touch gestures, tile
 //! cache) and the keyboard shortcuts list.
 
 use adw::prelude::*;
@@ -9,7 +9,7 @@ use gtk::{gio, glib};
 
 use super::CeraWindow;
 use crate::canvas::{MAX_COLOR_SLOTS, MAX_SIZE_SLOTS};
-use crate::settings;
+use crate::settings::{self, ToolbarPosition};
 use crate::vault::{PageSize, VaultConfig};
 
 const PAPERS: [(PaperKind, &str); 4] = [
@@ -123,14 +123,33 @@ impl CeraWindow {
         colors.connect_value_notify(|row| {
             let n = row.value() as usize;
             settings::update(|s| s.color_slots = n);
-            rebuild_toolbars();
+            for_each_window(CeraWindow::rebuild_slots);
         });
         let sizes = slots("Sizes", current.size_slots, MAX_SIZE_SLOTS);
         sizes.connect_value_notify(|row| {
             let n = row.value() as usize;
             settings::update(|s| s.size_slots = n);
-            rebuild_toolbars();
+            for_each_window(CeraWindow::rebuild_slots);
         });
+        let position = adw::ComboRow::builder()
+            .title("Position")
+            .model(&gtk::StringList::new(
+                &ToolbarPosition::ALL.map(ToolbarPosition::label),
+            ))
+            .selected(
+                ToolbarPosition::ALL
+                    .iter()
+                    .position(|p| *p == current.toolbar_position)
+                    .unwrap_or(0) as u32,
+            )
+            .build();
+        position.connect_selected_notify(|row| {
+            let all = ToolbarPosition::ALL;
+            let position = all[row.selected() as usize % all.len()];
+            settings::update(|s| s.toolbar_position = position);
+            for_each_window(CeraWindow::place_toolbar);
+        });
+        toolbar.add(&position);
         toolbar.add(&colors);
         toolbar.add(&sizes);
         page.add(&toolbar);
@@ -289,14 +308,14 @@ impl CeraWindow {
     }
 }
 
-/// Every window's tool bar, after the number of slots changed.
-fn rebuild_toolbars() {
+/// Applies a tool bar preference to every window.
+fn for_each_window(f: impl Fn(&CeraWindow)) {
     let Some(app) = gio::Application::default().and_downcast::<gtk::Application>() else {
         return;
     };
     for win in app.windows() {
         if let Ok(win) = win.downcast::<CeraWindow>() {
-            win.rebuild_slots();
+            f(&win);
         }
     }
 }

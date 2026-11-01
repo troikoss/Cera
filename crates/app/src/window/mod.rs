@@ -60,6 +60,8 @@ mod imp {
         #[template_child]
         pub tab_view: TemplateChild<adw::TabView>,
         #[template_child]
+        pub toolbar_scroll: TemplateChild<gtk::ScrolledWindow>,
+        #[template_child]
         pub toolbar: TemplateChild<gtk::Box>,
         #[template_child]
         pub tools: TemplateChild<adw::ToggleGroup>,
