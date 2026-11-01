@@ -19,8 +19,13 @@ label.debug-overlay {
 .toolbar-pill {
   background-color: var(--view-bg-color);
   border-radius: 999px;
-  padding: 4px 8px;
+  overflow: hidden;
   box-shadow: 0 1px 3px rgb(0 0 0 / 25%), 0 2px 8px rgb(0 0 0 / 12%);
+}
+
+/* Padding sits on the scrolled content, so buttons slide under the rounded ends. */
+.toolbar-pill .toolbar-content {
+  padding: 4px 8px;
 }
 
 .toolbar-pill button,
