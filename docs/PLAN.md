@@ -26,7 +26,9 @@ now spills ink pushed off a page onto the next one, which makes room for it, cas
 a new page at the end. Checked with injected pointer and key input in the headless
 compositor; yours to test on the tablet. Pages can be selected in the pages sidebar (a toggle
 on each thumbnail; select all, invert, before, after); checked with mouse input under GTK's
-Broadway backend on the desktop.
+Broadway backend on the desktop. A selected page's context menu acts on all selected pages
+(paper, move, bookmark, delete, each one undo step); checked with injected pointer input in
+the headless compositor.
 
 ## M0 — Skeleton
 

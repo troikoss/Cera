@@ -12,7 +12,8 @@
 //! A selection toggle in each thumbnail's other corner selects pages (a set of ids, apart from
 //! the grid's own single selection, which is the current page). While any are selected the
 //! bottom bar holds the selection tools instead: select all, invert, and select the pages
-//! before or after the page last selected. Only pages shown can be selected.
+//! before or after the page last selected. Only pages shown can be selected. The context menu
+//! of a selected page acts on all of them while several are: paper, move, bookmark, delete.
 //! The sorter is bound to the selected tab while the view is on screen and dropped, with its
 //! thumbnails, when the view is hidden or the sidebar closes.
 //!
@@ -411,12 +412,9 @@ impl CeraWindow {
         };
         with_sorter("insert", |s, p| s.insert(p.as_deref() == Some("after")));
         with_sorter("paper", |s, p| {
-            s.set_paper(match p.as_deref() {
-                Some("ruled") => PaperKind::Ruled,
-                Some("grid") => PaperKind::Grid,
-                Some("dots") => PaperKind::Dots,
-                _ => PaperKind::Blank,
-            })
+            if let Some(index) = s.selected() {
+                s.set_paper_of(&[index], paper_kind(p));
+            }
         });
         with_sorter("move", |s, p| {
             s.move_by(p.and_then(|p| p.parse::<i64>().ok()).unwrap_or(0))
@@ -425,6 +423,17 @@ impl CeraWindow {
         with_sorter("go", |s, p| s.select_end(p.as_deref() == Some("last")));
         with_sorter("bookmark", |s, _| s.toggle_bookmark());
         with_sorter("select", |s, p| s.select(p.as_deref()));
+        // The same, for the selected pages.
+        with_sorter("selected-paper", |s, p| {
+            s.set_paper_of(&s.checked_indices(), paper_kind(p))
+        });
+        with_sorter("selected-move", |s, p| {
+            s.move_checked(p.and_then(|p| p.parse::<i64>().ok()).unwrap_or(0))
+        });
+        with_sorter("selected-bookmark", |s, p| {
+            s.bookmark_checked(p.as_deref() == Some("on"))
+        });
+        with_sorter("selected-delete", |s, _| s.delete_checked());
         group
     }
 
@@ -432,17 +441,18 @@ impl CeraWindow {
         let Some(panel) = self.imp().pages.get() else {
             return;
         };
-        let (any, several, shown, checked) =
+        let (any, several, shown, checked, count) =
             self.imp()
                 .sorter
                 .borrow()
                 .as_ref()
-                .map_or((false, false, false, 0), |s| {
+                .map_or((false, false, false, 0, 0), |s| {
                     (
                         s.selected().is_some(),
                         s.store.n_items() > 1,
                         s.filtered.n_items() > 0,
                         s.checked.borrow().len(),
+                        s.store.n_items() as usize,
                     )
                 });
         panel
@@ -461,6 +471,11 @@ impl CeraWindow {
             ("delete", any && several),
             ("go", shown),
             ("select", shown),
+            ("selected-paper", checked > 0),
+            ("selected-bookmark", checked > 0),
+            ("selected-move", checked > 0 && several),
+            // A note keeps at least one page.
+            ("selected-delete", checked > 0 && checked < count),
         ] {
             if let Some(action) = panel
                 .actions
@@ -488,15 +503,6 @@ fn action_bar() -> gtk::CenterBox {
     let insert_menu = gio::Menu::new();
     insert_menu.append(Some("Insert Page _Before"), Some("pages.insert::before"));
     insert_menu.append(Some("Insert Page _After"), Some("pages.insert::after"));
-    let paper_menu = gio::Menu::new();
-    for (label, kind) in [
-        ("_Blank", "blank"),
-        ("_Ruled", "ruled"),
-        ("_Grid", "grid"),
-        ("_Dots", "dots"),
-    ] {
-        paper_menu.append(Some(label), Some(&format!("pages.paper::{kind}")));
-    }
     let left = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     left.append(
         &gtk::MenuButton::builder()
@@ -509,7 +515,7 @@ fn action_bar() -> gtk::CenterBox {
         &gtk::MenuButton::builder()
             .icon_name("view-grid-symbolic")
             .tooltip_text("Paper")
-            .menu_model(&paper_menu)
+            .menu_model(&paper_menu("paper"))
             .build(),
     );
     let middle = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -584,6 +590,42 @@ fn bar(
     bar.set_margin_start(6);
     bar.set_margin_end(6);
     bar
+}
+
+fn paper_kind(name: Option<String>) -> PaperKind {
+    match name.as_deref() {
+        Some("ruled") => PaperKind::Ruled,
+        Some("grid") => PaperKind::Grid,
+        Some("dots") => PaperKind::Dots,
+        _ => PaperKind::Blank,
+    }
+}
+
+/// Where the pages at `selected` go when moved one step earlier (`by < 0`) or later: each
+/// trades places with the unselected neighbour on that side, so a block moves as one and pages
+/// already at that end stay. Returns the moves, `(from, to)`, in the order to make them.
+fn step_moves(selected: &[usize], count: usize, by: i64) -> Vec<(usize, usize)> {
+    let mut sel = vec![false; count];
+    for &i in selected.iter().filter(|&&i| i < count) {
+        sel[i] = true;
+    }
+    let mut moves = Vec::new();
+    if by < 0 {
+        for i in 1..count {
+            if sel[i] && !sel[i - 1] {
+                sel.swap(i, i - 1);
+                moves.push((i, i - 1));
+            }
+        }
+    } else if by > 0 {
+        for i in (0..count.saturating_sub(1)).rev() {
+            if sel[i] && !sel[i + 1] {
+                sel.swap(i, i + 1);
+                moves.push((i, i + 1));
+            }
+        }
+    }
+    moves
 }
 
 /// A blank page the size of `spec`: its own paper, or `paper` if it shows a PDF.
@@ -705,8 +747,20 @@ impl Sorter {
         factory.connect_unbind(move |_, item| {
             let Some(sorter) = weak.upgrade() else { return };
             let item = item.downcast_ref::<gtk::ListItem>().expect("a list item");
-            if let Some(id) = page_of(item) {
-                sorter.bound.borrow_mut().remove(&id);
+            let Some(id) = page_of(item) else { return };
+            // Only this cell's entry: when the store is refilled, another cell may already
+            // have bound the same page (a new item for it) before this one lets go.
+            let picture = item
+                .child()
+                .and_then(|c| c.first_child())
+                .and_downcast::<gtk::Overlay>()
+                .and_then(|t| t.child());
+            let mut bound = sorter.bound.borrow_mut();
+            if bound
+                .get(&id)
+                .is_some_and(|c| picture.as_ref() == Some(c.picture.upcast_ref()))
+            {
+                bound.remove(&id);
             }
         });
         factory
@@ -1032,32 +1086,125 @@ impl Sorter {
         }
     }
 
-    fn set_paper(&self, kind: PaperKind) {
-        let Some(index) = self.selected() else { return };
+    /// Gives the pages at `indices` paper of `kind`, as one undo step.
+    fn set_paper_of(&self, indices: &[usize], kind: PaperKind) {
+        if indices.is_empty() {
+            return;
+        }
         let defaults = self.paper;
         let done = self.canvas.edit_pages(|note| {
             let crate::note::Note { history, doc, .. } = note;
-            let old = *doc.page(index)?.spec();
-            let paper = Paper {
-                kind,
-                spacing: if old.paper.spacing > 0.0 {
-                    old.paper.spacing
-                } else {
-                    defaults.spacing
-                },
-                line: if old.paper.line.a > 0 {
-                    old.paper.line
-                } else {
-                    defaults.line
-                },
-                fill: old.paper.fill,
-            };
-            history.set_page_spec(doc, index, PageSpec { paper, ..old })
+            history.begin_group();
+            let result = indices.iter().try_for_each(|&index| {
+                let old = *doc.page(index)?.spec();
+                let paper = Paper {
+                    kind,
+                    spacing: if old.paper.spacing > 0.0 {
+                        old.paper.spacing
+                    } else {
+                        defaults.spacing
+                    },
+                    line: if old.paper.line.a > 0 {
+                        old.paper.line
+                    } else {
+                        defaults.line
+                    },
+                    fill: old.paper.fill,
+                };
+                history.set_page_spec(doc, index, PageSpec { paper, ..old })
+            });
+            history.end_group();
+            result
         });
         if done.is_some() {
-            // The thumbnail is stale now (its spec changed); draw it at once.
+            // The thumbnails are stale now (their spec changed); draw them at once.
             self.send_jobs();
         }
+    }
+
+    /// The selected pages' indices in the note, in order.
+    fn checked_indices(&self) -> Vec<usize> {
+        let note = self.note.borrow();
+        let mut indices: Vec<usize> = self
+            .checked
+            .borrow()
+            .iter()
+            .filter_map(|&id| note.doc.page_index(id))
+            .collect();
+        indices.sort_unstable();
+        indices
+    }
+
+    fn all_checked_bookmarked(&self) -> bool {
+        self.checked
+            .borrow()
+            .iter()
+            .all(|&id| self.is_bookmarked(id))
+    }
+
+    /// Deletes the selected pages as one undo step, unless that would leave no page.
+    fn delete_checked(&self) {
+        let indices = self.checked_indices();
+        let Some(&first) = indices.first() else {
+            return;
+        };
+        if indices.len() >= self.store.n_items() as usize {
+            return;
+        }
+        let done = self.canvas.edit_pages(|note| {
+            let crate::note::Note { history, doc, .. } = note;
+            history.begin_group();
+            // From the back, so the indices still hold.
+            let result = indices
+                .iter()
+                .rev()
+                .try_for_each(|&index| history.remove_page(doc, index));
+            history.end_group();
+            result
+        });
+        if done.is_some() {
+            // Lets go of the deleted pages, and shows the page that took the first one's place.
+            self.reload();
+            self.select_page(first);
+        }
+    }
+
+    /// Moves the selected pages one step earlier or later as one undo step (see
+    /// `step_moves`); the current page stays current wherever it goes.
+    fn move_checked(&self, by: i64) {
+        let moves = step_moves(&self.checked_indices(), self.store.n_items() as usize, by);
+        if moves.is_empty() {
+            return;
+        }
+        let current = self
+            .selection
+            .selected_item()
+            .and_downcast::<glib::BoxedAnyObject>()
+            .map(|b| *b.borrow::<PageId>());
+        let done = self.canvas.edit_pages(|note| {
+            let crate::note::Note { history, doc, .. } = note;
+            history.begin_group();
+            let result = moves
+                .iter()
+                .try_for_each(|&(from, to)| history.move_page(doc, from, to));
+            history.end_group();
+            result
+        });
+        if done.is_some() {
+            self.reload();
+            let index = current.and_then(|id| self.note.borrow().doc.page_index(id));
+            if let Some(index) = index {
+                self.select_page(index);
+            }
+        }
+    }
+
+    /// Bookmarks the selected pages, or removes their bookmarks.
+    fn bookmark_checked(&self, on: bool) {
+        for index in self.checked_indices() {
+            self.canvas.set_page_bookmarked(index, on);
+        }
+        self.marks_changed();
     }
 
     fn bind(&self, id: PageId, cell: BoundCell) {
@@ -1221,12 +1368,23 @@ fn add_menu_gestures(item: &gtk::ListItem, cell: &gtk::Box) {
             {
                 selection.select_item(position, true);
             }
-            let bookmarked = cell
+            let Some(sorter) = cell
                 .root()
                 .and_downcast::<CeraWindow>()
                 .and_then(|w| w.imp().sorter.borrow().clone())
-                .is_some_and(|s| s.selected_bookmarked());
-            page_menu(&cell, x, y, touch, bookmarked);
+            else {
+                return;
+            };
+            // On one of several selected pages, the menu acts on all of them.
+            let checked = sorter.checked.borrow().len();
+            let menu = if checked > 1
+                && page_of(&item).is_some_and(|id| sorter.checked.borrow().contains(&id))
+            {
+                selection_menu(checked, sorter.all_checked_bookmarked())
+            } else {
+                page_menu(sorter.selected_bookmarked())
+            };
+            popup_menu(&menu, &cell, x, y, touch);
         }
     };
     let open = Rc::new(open);
@@ -1253,14 +1411,8 @@ fn add_menu_gestures(item: &gtk::ListItem, cell: &gtk::Box) {
     cell.add_controller(hold);
 }
 
-/// The page's actions: insert, paper, move, bookmark, delete. They act on the selected page,
-/// which is the one pressed.
-fn page_menu(cell: &gtk::Box, x: f64, y: f64, touch: bool, bookmarked: bool) {
-    let menu = gio::Menu::new();
-    let insert = gio::Menu::new();
-    insert.append(Some("Insert Page _Before"), Some("pages.insert::before"));
-    insert.append(Some("Insert Page _After"), Some("pages.insert::after"));
-    menu.append_section(None, &insert);
+/// The paper kinds, for the action `pages.<action>`.
+fn paper_menu(action: &str) -> gio::Menu {
     let paper = gio::Menu::new();
     for (label, kind) in [
         ("_Blank", "blank"),
@@ -1268,10 +1420,21 @@ fn page_menu(cell: &gtk::Box, x: f64, y: f64, touch: bool, bookmarked: bool) {
         ("_Grid", "grid"),
         ("_Dots", "dots"),
     ] {
-        paper.append(Some(label), Some(&format!("pages.paper::{kind}")));
+        paper.append(Some(label), Some(&format!("pages.{action}::{kind}")));
     }
+    paper
+}
+
+/// The page's actions: insert, paper, move, bookmark, delete. They act on the selected page,
+/// which is the one pressed.
+fn page_menu(bookmarked: bool) -> gio::Menu {
+    let menu = gio::Menu::new();
+    let insert = gio::Menu::new();
+    insert.append(Some("Insert Page _Before"), Some("pages.insert::before"));
+    insert.append(Some("Insert Page _After"), Some("pages.insert::after"));
+    menu.append_section(None, &insert);
     let arrange = gio::Menu::new();
-    arrange.append_submenu(Some("_Paper"), &paper);
+    arrange.append_submenu(Some("_Paper"), &paper_menu("paper"));
     arrange.append(Some("Move _Earlier"), Some("pages.move::-1"));
     arrange.append(Some("Move _Later"), Some("pages.move::1"));
     arrange.append(
@@ -1286,8 +1449,41 @@ fn page_menu(cell: &gtk::Box, x: f64, y: f64, touch: bool, bookmarked: bool) {
     let delete = gio::Menu::new();
     delete.append(Some("_Delete Page"), Some("pages.delete::"));
     menu.append_section(None, &delete);
+    menu
+}
 
-    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+/// The actions for `count` selected pages: paper, move, bookmark (or remove the bookmarks if
+/// all have one), clear the selection, delete.
+fn selection_menu(count: usize, bookmarked: bool) -> gio::Menu {
+    let menu = gio::Menu::new();
+    let arrange = gio::Menu::new();
+    arrange.append_submenu(Some("_Paper"), &paper_menu("selected-paper"));
+    arrange.append(Some("Move _Earlier"), Some("pages.selected-move::-1"));
+    arrange.append(Some("Move _Later"), Some("pages.selected-move::1"));
+    if bookmarked {
+        arrange.append(
+            Some("Remove Book_marks"),
+            Some("pages.selected-bookmark::off"),
+        );
+    } else {
+        arrange.append(Some("Book_mark Pages"), Some("pages.selected-bookmark::on"));
+    }
+    menu.append_section(None, &arrange);
+    let selection = gio::Menu::new();
+    selection.append(Some("_Clear Selection"), Some("pages.select::none"));
+    menu.append_section(None, &selection);
+    let delete = gio::Menu::new();
+    delete.append(
+        Some(&format!("_Delete {count} Pages")),
+        Some("pages.selected-delete::"),
+    );
+    menu.append_section(None, &delete);
+    menu
+}
+
+/// Opens `menu` at the press on `cell`.
+fn popup_menu(menu: &gio::Menu, cell: &gtk::Box, x: f64, y: f64, touch: bool) {
+    let popover = gtk::PopoverMenu::from_model(Some(menu));
     popover.set_parent(cell);
     popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
     if touch {
@@ -1334,4 +1530,39 @@ fn page_of(item: &gtk::ListItem) -> Option<PageId> {
     item.item()
         .and_downcast::<glib::BoxedAnyObject>()
         .map(|b| *b.borrow::<PageId>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step_moves;
+
+    /// Applies the moves to `0..count` and returns the new order.
+    fn apply(selected: &[usize], count: usize, by: i64) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..count).collect();
+        for (from, to) in step_moves(selected, count, by) {
+            let page = order.remove(from);
+            order.insert(to, page);
+        }
+        order
+    }
+
+    #[test]
+    fn a_block_moves_as_one() {
+        assert_eq!(apply(&[2, 3], 5, -1), [0, 2, 3, 1, 4]);
+        assert_eq!(apply(&[2, 3], 5, 1), [0, 1, 4, 2, 3]);
+    }
+
+    #[test]
+    fn scattered_pages_each_move_one_step() {
+        assert_eq!(apply(&[1, 3], 5, -1), [1, 0, 3, 2, 4]);
+        assert_eq!(apply(&[1, 3], 5, 1), [0, 2, 1, 4, 3]);
+    }
+
+    #[test]
+    fn pages_at_the_end_stay() {
+        assert_eq!(apply(&[0, 1, 3], 5, -1), [0, 1, 3, 2, 4]);
+        assert_eq!(apply(&[1, 3, 4], 5, 1), [0, 2, 1, 3, 4]);
+        assert!(step_moves(&[0, 1], 2, -1).is_empty());
+        assert!(step_moves(&[0], 3, 0).is_empty());
+    }
 }
