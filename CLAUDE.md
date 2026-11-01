@@ -7,6 +7,7 @@ Notes live in an Obsidian-style vault folder.
 - Design and reasoning: [docs/DESIGN.md](docs/DESIGN.md)
 - Milestones, task lists, risks: [docs/PLAN.md](docs/PLAN.md). Tick boxes there as work lands
   and update its **Status** line.
+- Feature ideas and add-ons, not yet scheduled: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## The one rule: efficiency
 

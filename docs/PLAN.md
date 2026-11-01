@@ -196,7 +196,8 @@ PNG; `build-aux/install.sh` and start Cera from the app grid; open a `.cera` fro
 ## Later
 
 Partial (area) eraser, shapes and ruler, text boxes, images, PDF text search, handwriting
-recognition, dark paper, sync-conflict handling.
+recognition, dark paper, sync-conflict handling. Feature ideas and add-ons are collected in
+[ROADMAP.md](ROADMAP.md).
 
 ## Risks to retire early
 
