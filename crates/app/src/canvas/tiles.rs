@@ -59,6 +59,8 @@ impl Canvas {
         let gens = imp.ink_gen.borrow();
         let mut expected = imp.ink_expected.borrow_mut();
         expected.clear();
+        // Finished wet strokes wait for their tiles, but an emptied tile gets none.
+        let mut wet = imp.wet.borrow_mut();
 
         let (_, y0, _, y1) = view.visible_pt();
         let pages = doc
@@ -146,6 +148,7 @@ impl Canvas {
             };
             if strokes.is_empty() {
                 cache.remove_page(&(doc.id, id, Layer::Ink));
+                wet.retain(|w| w.page != id || w.generation.is_none());
                 continue;
             }
             let generation = gens.get(&id).copied().unwrap_or(0);
@@ -173,6 +176,12 @@ impl Canvas {
                 let in_tile = ink::strokes_in(&nearby, area);
                 if in_tile.is_empty() {
                     cache.remove_tile(&key); // everything there was erased
+                    for w in wet
+                        .iter_mut()
+                        .filter(|w| w.page == id && w.scale == s && w.generation.is_some())
+                    {
+                        w.drop_tile(t);
+                    }
                     continue;
                 }
                 if overlaps(rect, inner) {

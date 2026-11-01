@@ -123,6 +123,8 @@ mod imp {
         pub(super) selection: RefCell<Option<lasso::Selection>>,
         pub(super) ghosts: RefCell<Vec<lasso::Ghost>>,
         pub(super) erasing: Cell<bool>,
+        /// The stroke this pen contact drew; a barrel press mid-stroke erases around it.
+        pub(super) drawn: RefCell<Option<std::sync::Arc<cera_core::Stroke>>>,
         pub(super) eraser_cursor: Cell<Option<(f64, f64)>>,
         pub(super) tools: RefCell<Rc<Tools>>,
         pub(super) current_page: Cell<u32>,
@@ -158,6 +160,7 @@ mod imp {
                 selection: RefCell::default(),
                 ghosts: RefCell::default(),
                 erasing: Cell::new(false),
+                drawn: RefCell::default(),
                 eraser_cursor: Cell::new(None),
                 tools: RefCell::default(),
                 current_page: Cell::new(0),

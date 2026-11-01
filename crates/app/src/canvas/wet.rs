@@ -161,6 +161,12 @@ impl WetStroke {
     pub fn tile_count(&self) -> usize {
         self.tiles.len()
     }
+
+    /// Forgets a tile whose ink was all erased or undone: no finished tile will come to
+    /// replace it.
+    pub fn drop_tile(&mut self, t: (u16, u16)) {
+        self.tiles.remove(&t);
+    }
 }
 
 /// Clears the pixel box in one tile and redraws the stroke's shapes there in one fill.

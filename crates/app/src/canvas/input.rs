@@ -18,6 +18,7 @@ use gtk::{gdk, glib};
 use super::Canvas;
 use super::tiles::ERASER_RADIUS;
 use super::wet::{Pen, WetStroke};
+use crate::note::SharedNote;
 
 /// Full-pressure width presets in points: fine, medium, broad.
 pub const PEN_WIDTHS: [f32; 3] = [0.8, 1.6, 3.2];
@@ -171,7 +172,7 @@ impl Canvas {
                     let tip_down = buttons.contains(gdk::ModifierType::BUTTON1_MASK);
                     tracing::debug!(button, tip_down, "stylus button down");
                     // With the tip down the press resets the gesture, and `cancel` below has
-                    // kept the ink so far; the rest of the stroke erases.
+                    // committed the ink so far, which stays; the rest of the stroke erases.
                     if tip_down && is_barrel(button) {
                         canvas.erase_from(Sample {
                             x,
@@ -303,6 +304,7 @@ impl Canvas {
 
     fn begin(&self, s: Sample, eraser: bool) {
         let imp = self.imp();
+        imp.drawn.take();
         let Some(note) = imp.note.borrow().clone() else {
             return;
         };
@@ -312,9 +314,7 @@ impl Canvas {
         }
         self.clear_selection();
         if eraser || self.tool() == ToolKind::Eraser {
-            note.borrow_mut().history.begin_group();
-            imp.erasing.set(true);
-            self.erase_at(s);
+            self.begin_erase(&note, s);
             return;
         }
         let Some(view) = self.view() else { return };
@@ -355,14 +355,26 @@ impl Canvas {
         self.queue_draw();
     }
 
-    /// The barrel button pressed with the tip down: what was drawn so far stays and the rest
-    /// of the stroke erases.
+    /// The barrel button pressed with the tip down: the ink so far stays and the rest of the
+    /// stroke erases other strokes.
     fn erase_from(&self, s: Sample) {
-        if self.imp().erasing.get() {
+        let imp = self.imp();
+        if imp.erasing.get() {
             return;
         }
         self.end();
-        self.begin(s, true);
+        self.clear_selection();
+        let Some(note) = imp.note.borrow().clone() else {
+            return;
+        };
+        self.begin_erase(&note, s);
+    }
+
+    /// An eraser drag starts; its removals undo as one step.
+    fn begin_erase(&self, note: &SharedNote, s: Sample) {
+        note.borrow_mut().history.begin_group();
+        self.imp().erasing.set(true);
+        self.erase_at(s);
     }
 
     fn extend(&self, samples: &[Sample]) {
@@ -480,12 +492,13 @@ impl Canvas {
         let added = {
             let mut note = note.borrow_mut();
             let crate::note::Note { history, doc, .. } = &mut *note;
-            history.add_strokes(doc, wet.page, vec![stroke])
+            history.add_strokes(doc, wet.page, vec![stroke.clone()])
         };
         if let Err(e) = added {
             tracing::warn!("cannot add stroke: {e}");
             return;
         }
+        imp.drawn.replace(Some(stroke));
         wet.generation = Some(self.invalidate_ink(wet.page, area));
         imp.wet.borrow_mut().push(wet);
         self.request_tiles();
@@ -503,6 +516,7 @@ impl Canvas {
         };
         let radius = (ERASER_RADIUS / view.zoom) as f32;
         let (x, y) = view.to_pt(s.x, s.y);
+        let drawn = imp.drawn.borrow();
         let pages: Vec<_> = {
             let doc = imp.doc.borrow();
             let Some(doc) = doc.as_ref() else { return };
@@ -522,6 +536,7 @@ impl Canvas {
             };
             let hit: Vec<usize> = (0..strokes.len())
                 .filter(|&i| ink::hits(&strokes[i], at, radius))
+                .filter(|&i| !drawn.as_ref().is_some_and(|d| Arc::ptr_eq(d, &strokes[i])))
                 .collect();
             let Some(area) = hit.iter().map(|&i| strokes[i].bounds()).reduce(Rect::union) else {
                 continue;
@@ -546,7 +561,7 @@ impl Canvas {
     /// synthetic samples, so the pipeline can be checked without a stylus or input injection.
     pub fn run_demo(&self) {
         let (w, h) = (f64::from(self.width()), f64::from(self.height()));
-        let line = |row: f64, wave: f64| -> Vec<Sample> {
+        let line = move |row: f64, wave: f64| -> Vec<Sample> {
             (0..60)
                 .map(|i| {
                     let t = f64::from(i);
@@ -590,7 +605,20 @@ impl Canvas {
             glib::timeout_add_local_once(std::time::Duration::from_millis(1000), move || {
                 canvas.undo();
                 tracing::info!("demo: undid the erase");
-                canvas.demo_scroll();
+                // The barrel pressed mid-stroke (the gesture's cancel, then its down): the line
+                // so far stays, though the eraser starts on it.
+                let barrel = line(10.0, 8.0);
+                canvas.begin(barrel[0], false);
+                canvas.extend(&barrel[1..30]);
+                canvas.end();
+                canvas.erase_from(barrel[30]);
+                canvas.extend(&barrel[31..]);
+                canvas.end();
+                tracing::info!("demo: drew a line and pressed the barrel");
+                // Long enough to take a screenshot of it (tools/headless).
+                glib::timeout_add_local_once(std::time::Duration::from_millis(3000), move || {
+                    canvas.demo_scroll();
+                });
             });
         });
     }
