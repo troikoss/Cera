@@ -29,5 +29,5 @@ pub use model::{
     Tool,
 };
 pub use simplify::simplify;
-pub use space::SPILL_GAP;
+pub use space::{SPILL_GAP, Side};
 pub use undo::{Changes, History};

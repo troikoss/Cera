@@ -202,16 +202,25 @@ second finger within 250 ms turns a just-started stroke into a pinch.
 inside the loop (or, in rectangle mode, the dragged rectangle) are selected. In stroke mode
 the drag selects every stroke whose ink it passes within 4 px of (segment against segment,
 `ink::touches_path`, so a fast swipe can't skip a thin line), and a tap selects the topmost
-stroke under it. In add-space mode a press takes every stroke that starts below it on that
-page and the drag moves them only vertically, down to insert space or up to remove it, no
-higher than the press line and down until the line reaches the bottom edge; they are
-deselected on release. Strokes pushed across the bottom edge spill onto the next page
-(`History::push_down` in `core/src/space.rs`, one undo step): they keep their layout and start
-where that page's ink began (or, on a page without ink, at the source page's top margin),
-and that page's own ink moves down by the block's height plus an 18 pt gap, so it may spill
-in turn. The cascade adds a blank page (the vault's new-page paper) after the last page if
-needed. Strokes that arrived on a page never spill again, so a stroke taller than a page
-can't loop; arrivals are appended, so they draw on top. Selected strokes leave the page's ink tiles and are drawn from
+stroke under it. In add-space mode the press takes nothing until the drag's first move (past
+8 px, so a settling pen tip can't pick the wrong side) picks a side: down takes every stroke whose middle is below the press, up every one
+whose middle is above it (a press in the gap between pages counts as the edge of the page on
+that side, so ink right at an edge can still be moved). The drag moves them only
+vertically, away from the line as far as it goes (adding space); dragged back past the press
+they rest where they were, so add space never removes space. The dashed line stays where
+the press was, with the space being added shown as a band from it. They are deselected on
+release. The pages count as one strip
+(`History::move_space` in `core/src/space.rs`, one undo step): a stroke mostly past the page's
+edge lands on the neighbouring page exactly where it was dropped (pages sit 12 pt apart), or
+further on after a long drag; a stroke straddling an edge is nudged just enough to fit the
+page holding most of it. A page that receives ink moves its own ink away only as far as
+needed to stay 18 pt clear of the arrivals, so it may spill in turn, and blank pages (the
+vault's new-page paper) are added at the end, or the start, if needed. An arrival moves on
+only if it lies wholly past the edge, so a stroke taller than a page can't loop. Arrivals are
+appended, so they draw on top. The selection and lasso layers are drawn after every page, so
+a selection dragged past its page shows over the neighbouring one. When an edit or an undo
+adds or removes pages, the view scrolls with the page in its middle, so a page added at the
+start doesn't move the view off the ink. Selected strokes leave the page's ink tiles and are drawn from
 one texture (at most 2048 px, 16 MiB) made when the selection is, so dragging redraws no tile.
 A move, recolour or reorder (Arrange: forward, backward, front, back; a step passes the
 nearest overlapping stroke of the same tool, since highlighters always sit under pen ink;

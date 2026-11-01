@@ -267,6 +267,7 @@ impl Canvas {
         let (_, y0, _, y1) = view.visible_pt();
         let mut covered = Vec::new();
         let mut on_screen = Vec::new();
+        let mut rects = Vec::new();
         for i in doc.layout.pages_between(y0, y1) {
             let (id, spec) = doc.pages[i];
             on_screen.push(id);
@@ -301,7 +302,26 @@ impl Canvas {
                     draw_wet(snapshot, &cache, doc.id, w, &page, view.zoom);
                 }
             }
-            self.draw_lasso_layer(snapshot, &cache, doc.id, id, &page, view.zoom);
+            rects.push((id, page));
+        }
+        // The lasso layers go on top of every page: a selection dragged past its page's
+        // bottom edge (add space) shows over the next one instead of under its paper.
+        if let Some(sel) = self.selection_page()
+            && !on_screen.contains(&sel)
+            && let Some(i) = doc.page_index(sel)
+        {
+            let r = doc.layout.page_rect(i);
+            let (vx, vy) = view.to_view(r.x, r.y);
+            let page = graphene::Rect::new(
+                snap(vx),
+                snap(vy),
+                (r.w * view.zoom) as f32,
+                (r.h * view.zoom) as f32,
+            );
+            rects.push((sel, page));
+        }
+        for (id, page) in &rects {
+            self.draw_lasso_layer(snapshot, &cache, doc.id, *id, page, view.zoom);
         }
         // Older zoom levels were only needed until the settled one arrived.
         for page in covered {

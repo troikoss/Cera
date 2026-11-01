@@ -124,6 +124,9 @@ mod imp {
         pub(super) wet: RefCell<Vec<WetStroke>>,
         pub(super) lasso: RefCell<Option<lasso::LassoPath>>,
         pub(super) selection: RefCell<Option<lasso::Selection>>,
+        /// An add-space press (widget coordinates) waiting for its first move, which picks
+        /// the ink below or above it.
+        pub(super) space_press: Cell<Option<(f64, f64)>>,
         /// What pressed last (stylus, mouse or finger), for the context menu.
         pub(super) input_source: Cell<lasso::InputSource>,
         /// A stylus or finger press that may turn into a hold.
@@ -169,6 +172,7 @@ mod imp {
                 wet: RefCell::default(),
                 lasso: RefCell::default(),
                 selection: RefCell::default(),
+                space_press: Cell::new(None),
                 input_source: Cell::default(),
                 hold: RefCell::default(),
                 press: Cell::default(),
@@ -492,16 +496,54 @@ impl Canvas {
         }
     }
 
-    /// Redraws what an undo or redo changed.
+    /// Redraws what an undo or redo changed. Pages added or removed before the one in view
+    /// don't move the view off it.
     fn apply_changes(&self, note: &SharedNote, changes: &Changes) {
         if changes.layout {
+            let anchor = self.view_anchor();
             self.layout_changed(note);
+            if let Some((page, y)) = anchor {
+                self.restore_anchor(page, y);
+            }
         }
         for &(page, area) in &changes.ink {
             self.invalidate_ink(page, area);
         }
         self.request_tiles();
         self.queue_draw();
+    }
+
+    /// The page in the middle of the view and its top in the layout (points).
+    fn view_anchor(&self) -> Option<(PageId, f64)> {
+        let view = self.view()?;
+        let (_, cy) = view.to_pt(
+            f64::from(self.width()) / 2.0,
+            f64::from(self.height()) / 2.0,
+        );
+        let doc = self.imp().doc.borrow();
+        let doc = doc.as_ref()?;
+        let i = doc
+            .layout
+            .pages_between(cy - layout::GAP_PT, cy + layout::GAP_PT)
+            .next()?;
+        Some((doc.pages[i].0, doc.layout.page_rect(i).y))
+    }
+
+    /// Scrolls by however far `page` moved from layout y `was` (points).
+    fn restore_anchor(&self, page: PageId, was: f64) {
+        let now = {
+            let doc = self.imp().doc.borrow();
+            let Some(doc) = doc.as_ref() else { return };
+            let Some(i) = doc.page_index(page) else {
+                return;
+            };
+            doc.layout.page_rect(i).y
+        };
+        if now != was
+            && let Some(adj) = self.adjustment(gtk::Orientation::Vertical)
+        {
+            adj.set_value(adj.value() + (now - was) * self.imp().zoom.get());
+        }
     }
 
     /// Pages were added, removed, moved or changed paper.

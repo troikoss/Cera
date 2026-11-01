@@ -4,10 +4,12 @@
 //! tap one) to select what the pen touches; then drag to move them, or delete, recolour,
 //! reorder, cut, copy and paste (also into other notes).
 //!
-//! In add-space mode a press takes every stroke that starts below it on that page, and the
-//! drag moves them straight down (inserting space) or up (removing it); they are deselected
-//! on release. Ink pushed past the bottom edge spills onto the next page, which makes room
-//! for it (`cera_core::History::push_down`).
+//! In add-space mode the drag's first move picks a side: down takes every stroke whose middle
+//! is below the press on that page, up every one whose middle is above it (a press in the
+//! gap between pages counts as the edge of the page on that side). The drag then moves them
+//! straight away from the line, adding space; dragged back past the press they rest where
+//! they were. They are deselected on release. Ink pushed past a page's edge spills onto the
+//! neighbouring page, which makes room for it (`cera_core::History::move_space`).
 //!
 //! The context menu with those actions (shown by the window, at the press, with any tool)
 //! opens differently per input: the mouse right-clicks anywhere; the stylus, or a drawing
@@ -24,7 +26,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cera_core::{
-    Arrange, Background, PageId, PageSpec, Rect, Rgba8, Stroke, Tool, arrange, polygon_contains,
+    Arrange, Background, PageId, PageSpec, Rect, Rgba8, Side, Stroke, Tool, arrange,
+    polygon_contains,
 };
 use cera_render::ink;
 use cera_render::tile::{DocId, Grid, Layer, Scale, TileKey};
@@ -110,9 +113,9 @@ pub(super) struct Selection {
     /// Where the current drag started (page points).
     drag_from: Option<(f32, f32)>,
     texture: Option<InkTexture>,
-    /// Made by add space: the line pressed on (page y) and the page height, which bound a
-    /// vertical-only drag.
-    space: Option<(f32, f32)>,
+    /// Made by add space: the line pressed on (page y) and the side of it the strokes came
+    /// from, which bound a vertical-only drag.
+    space: Option<(f32, Side)>,
 }
 
 /// Deselected strokes shown from their texture until the tiles under them include them.
@@ -140,10 +143,16 @@ impl Canvas {
         self.imp().selection.borrow().is_some()
     }
 
+    /// The page the selection is on.
+    pub(super) fn selection_page(&self) -> Option<PageId> {
+        self.imp().selection.borrow().as_ref().map(|s| s.page)
+    }
+
     /// A lasso loop or a drag of the selection is in progress.
     pub(super) fn lasso_active(&self) -> bool {
         let imp = self.imp();
         imp.lasso.borrow().is_some()
+            || imp.space_press.get().is_some()
             || imp
                 .selection
                 .borrow()
@@ -161,6 +170,25 @@ impl Canvas {
             let r = doc.layout.page_rect(i);
             (sx >= r.x && sx <= r.x + r.w)
                 .then(|| (i, doc.pages[i].0, ((sx - r.x) as f32, (sy - r.y) as f32)))
+        })
+    }
+
+    /// For a view point in the gap between pages: the page on `side` of it (below or
+    /// above), and the point on that page's near edge.
+    fn page_beside_gap(&self, x: f64, y: f64, side: Side) -> Option<(usize, PageId, (f32, f32))> {
+        let view = self.view()?;
+        let (sx, sy) = view.to_pt(x, y);
+        let doc = self.imp().doc.borrow();
+        let doc = doc.as_ref()?;
+        let gap = super::layout::GAP_PT;
+        doc.layout.pages_between(sy - gap, sy + gap).find_map(|i| {
+            let r = doc.layout.page_rect(i);
+            let edge = match side {
+                Side::Below => (sy < r.y && sy >= r.y - gap).then_some(0.0),
+                Side::Above => (sy > r.y + r.h && sy <= r.y + r.h + gap).then_some(r.h),
+            }?;
+            (sx >= r.x && sx <= r.x + r.w)
+                .then(|| (i, doc.pages[i].0, ((sx - r.x) as f32, edge as f32)))
         })
     }
 
@@ -192,7 +220,8 @@ impl Canvas {
         }
         self.clear_selection();
         if shape == SelectShape::Space {
-            self.space_begin(x, y);
+            // Nothing is taken until the first move shows which side.
+            imp.space_press.set(Some((x, y)));
             return;
         }
         if let Some((index, page, p)) = self.page_point(x, y) {
@@ -209,19 +238,27 @@ impl Canvas {
     pub(super) fn lasso_extend(&self, x: f64, y: f64) {
         let imp = self.imp();
         let min_step = (MIN_STEP_PX / imp.zoom.get()) as f32;
+        if let Some((px, py)) = imp.space_press.get() {
+            // As far as a hold may wander: a pen tip settling as it lands mustn't pick the
+            // wrong side.
+            if (y - py).abs() <= HOLD_SLOP_PX {
+                return;
+            }
+            imp.space_press.set(None);
+            let side = if y > py { Side::Below } else { Side::Above };
+            self.space_begin(px, py, side);
+        }
         if let Some(sel) = imp.selection.borrow_mut().as_mut()
             && let Some(from) = sel.drag_from
         {
             if let Some(p) = self.point_on(sel.page, x, y) {
+                let dy = p.1 - from.1;
                 sel.offset = match sel.space {
-                    // Kept on the page: no higher than the line, no lower than the bottom.
-                    // No higher than the line; down until the line reaches the bottom
-                    // edge, with ink past the edge spilling onto the next page.
-                    Some((line, height)) => {
-                        let up = line - sel.bounds.y0;
-                        let down = (height - line).max(0.0);
-                        (0.0, (p.1 - from.1).clamp(up, down))
-                    }
+                    // Away from the line as far as it goes, with ink past the page's edge
+                    // spilling over; dragged back past the press, the ink just rests where
+                    // it was.
+                    Some((_, Side::Below)) => (0.0, dy.max(0.0)),
+                    Some((_, Side::Above)) => (0.0, dy.min(0.0)),
                     None => (p.0 - from.0, p.1 - from.1),
                 };
             }
@@ -246,19 +283,21 @@ impl Canvas {
         let imp = self.imp();
         self.cancel_hold();
         let source = imp.input_source.get();
+        // An add-space press that never moved: a tap, which does nothing.
+        imp.space_press.set(None);
         let dragged = imp.selection.borrow_mut().as_mut().and_then(|s| {
             s.drag_from.take()?;
-            Some((std::mem::take(&mut s.offset), s.space.is_some()))
+            Some((std::mem::take(&mut s.offset), s.space.map(|(_, side)| side)))
         });
         let slop = (TAP_SLOP_PX / imp.zoom.get()) as f32;
         if let Some((offset, space)) = dragged {
             let moved = offset.0.hypot(offset.1) > slop;
-            if moved && space && offset.1 > 0.0 {
-                self.push_selection_down(offset.1);
-            } else if moved {
-                self.move_selection(offset);
+            match space {
+                Some(side) if moved => self.move_space(side, offset.1),
+                None if moved => self.move_selection(offset),
+                _ => {}
             }
-            if space {
+            if space.is_some() {
                 // Add space leaves nothing selected; a tap does nothing.
                 self.clear_selection();
             } else if !moved && source != InputSource::Mouse {
@@ -360,6 +399,7 @@ impl Canvas {
         let imp = self.imp();
         self.cancel_hold();
         imp.lasso.take();
+        imp.space_press.set(None);
         let space = imp.selection.borrow_mut().as_mut().is_some_and(|s| {
             s.drag_from = None;
             s.offset = (0.0, 0.0);
@@ -371,9 +411,15 @@ impl Canvas {
         self.queue_draw();
     }
 
-    /// Add space: selects every stroke that starts below the press and starts dragging them.
-    fn space_begin(&self, x: f64, y: f64) {
-        let Some((index, page, p)) = self.page_point(x, y) else {
+    /// Add space: selects every stroke on `side` of the press at (`x`, `y`), judged by its
+    /// middle so a press across a stroke still takes it, and starts dragging them.
+    fn space_begin(&self, x: f64, y: f64, side: Side) {
+        // A press in the gap between pages counts as the edge of the page on that side, so
+        // ink right at the edge can still be taken.
+        let Some((index, page, p)) = self
+            .page_point(x, y)
+            .or_else(|| self.page_beside_gap(x, y, side))
+        else {
             return;
         };
         let Some(note) = self.note() else { return };
@@ -385,22 +431,24 @@ impl Canvas {
             strokes
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| s.bounds().y0 >= p.1)
+                .filter(|(_, s)| {
+                    let b = s.bounds();
+                    let middle = (b.y0 + b.y1) / 2.0;
+                    match side {
+                        Side::Below => middle >= p.1,
+                        Side::Above => middle <= p.1,
+                    }
+                })
                 .map(|(i, _)| i)
                 .collect()
         };
-        tracing::debug!(below = indices.len(), "add space");
+        tracing::debug!(?side, strokes = indices.len(), "add space");
         if indices.is_empty() {
             return;
         }
-        let height = {
-            let doc = self.imp().doc.borrow();
-            let Some(doc) = doc.as_ref() else { return };
-            doc.pages[index].1.height
-        };
         self.select(page, indices);
         if let Some(s) = self.imp().selection.borrow_mut().as_mut() {
-            s.space = Some((p.1, height));
+            s.space = Some((p.1, side));
             s.drag_from = Some(p);
         }
     }
@@ -574,9 +622,10 @@ impl Canvas {
         self.emit_by_name::<()>("changed", &[]);
     }
 
-    /// Commits an add-space drag down by `dy`: ink pushed past the bottom edge spills onto
-    /// the next page, which makes room for it, and so on (`History::push_down`).
-    fn push_selection_down(&self, dy: f32) {
+    /// Commits an add-space drag by `dy` of the strokes from `side` of the line: ink pushed
+    /// past a page's edge spills onto the neighbouring page, which makes room for it, and so
+    /// on (`History::move_space`).
+    fn move_space(&self, side: Side, dy: f32) {
         let imp = self.imp();
         let Some(note) = self.note() else { return };
         let new_page = imp.new_page_spec.borrow().clone();
@@ -588,13 +637,22 @@ impl Canvas {
             let Some(index) = doc.page_index(s.page) else {
                 return;
             };
-            history.push_down(doc, index, &s.indices, dy, |spec| match &new_page {
-                Some(f) => f(spec),
-                None => PageSpec {
-                    background: Background::None,
-                    ..*spec
+            let gap = super::layout::GAP_PT as f32;
+            history.move_space(
+                doc,
+                index,
+                &s.indices,
+                side,
+                dy,
+                gap,
+                |spec| match &new_page {
+                    Some(f) => f(spec),
+                    None => PageSpec {
+                        background: Background::None,
+                        ..*spec
+                    },
                 },
-            })
+            )
         };
         let changes = match result {
             Ok(changes) => changes,
@@ -604,12 +662,12 @@ impl Canvas {
             }
         };
         tracing::debug!(
+            ?side,
             pages = changes.ink.len(),
             added = changes.layout,
-            "push down"
+            "move space"
         );
-        // The ghost shows the strokes where they were dropped until the tiles catch up;
-        // what spilled is hidden under the next page.
+        // The ghost shows the strokes where they were dropped until the tiles catch up.
         if let Some(s) = imp.selection.borrow_mut().as_mut() {
             s.strokes = s
                 .strokes
@@ -622,6 +680,7 @@ impl Canvas {
             }
         }
         self.clear_selection();
+        // A page added at the start doesn't move the view off the ink.
         self.apply_changes(&note, &changes);
         self.emit_by_name::<()>("changed", &[]);
     }
@@ -885,18 +944,25 @@ impl Canvas {
             if let Some(t) = &s.texture {
                 snapshot.append_texture(&t.texture, &to_view(t.rect.translated(dx, dy)));
             }
-            if let Some((line, _)) = s.space {
-                // The space being added (or removed) as a band, and the line it follows.
-                let (a, b) = (line.min(line + dy), line.max(line + dy));
-                let y0 = page.y() + (f64::from(a) * zoom) as f32;
-                let y1 = page.y() + (f64::from(b) * zoom) as f32;
-                let mut band = accent();
-                band.set_alpha(0.12);
-                snapshot.append_color(
-                    &band,
-                    &graphene::Rect::new(page.x(), y0, page.width(), y1 - y0),
-                );
-                let y = page.y() + (f64::from(line + dy) * zoom) as f32;
+            if let Some((line, side)) = s.space {
+                // The line pressed on stays put; the space being added shows as a band from
+                // it.
+                let away = match side {
+                    Side::Below => dy > 0.0,
+                    Side::Above => dy < 0.0,
+                };
+                if away {
+                    let (a, b) = (line.min(line + dy), line.max(line + dy));
+                    let y0 = page.y() + (f64::from(a) * zoom) as f32;
+                    let y1 = page.y() + (f64::from(b) * zoom) as f32;
+                    let mut band = accent();
+                    band.set_alpha(0.12);
+                    snapshot.append_color(
+                        &band,
+                        &graphene::Rect::new(page.x(), y0, page.width(), y1 - y0),
+                    );
+                }
+                let y = page.y() + (f64::from(line) * zoom) as f32;
                 let builder = gsk::PathBuilder::new();
                 builder.move_to(page.x(), y);
                 builder.line_to(page.x() + page.width(), y);

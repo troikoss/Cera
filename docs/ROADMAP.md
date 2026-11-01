@@ -38,8 +38,10 @@ Every add-on waits on the add-on system.
 - [x] Add-space tool: insert or remove vertical space, standalone or as a selection mode — D2
       (D3 if ink pushed off the page spills onto the next one). Done as a lasso mode; ink
       stops at the page's bottom edge
-  - [x] Spill ink pushed off the page onto the next one — D3 (the next page's ink moves down
-        to make room, cascading; a page is added at the end if needed)
+  - [x] Spill ink pushed off the page onto the next one — D3 (ink lands where it is dropped; the
+        next page's ink moves down only if needed, cascading; pages are added at the end)
+  - [x] Add space above: the drag's first move picks the ink below or above the press;
+        ink above spills onto the previous pages (a page is added at the start if needed)
 - [x] More selection tools: rectangle select, pen (stroke-touch) select, next to the lasso —
       D1 rectangle, D2 pen
   - [x] Rectangle select (a lasso mode: tap the active lasso)
