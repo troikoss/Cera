@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Lasso selection (DESIGN.md §9): draw a loop (or, in rectangle mode, drag out a rectangle)
-//! on a page to select the strokes mostly inside it, then drag to move them, or delete,
-//! recolour, reorder, cut, copy and paste (also into other notes).
+//! on a page to select the strokes mostly inside it, or in stroke mode run over strokes (or
+//! tap one) to select what the pen touches; then drag to move them, or delete, recolour,
+//! reorder, cut, copy and paste (also into other notes).
 //!
 //! The context menu with those actions (shown by the window, at the press, with any tool)
 //! opens differently per input: the mouse right-clicks anywhere; the stylus, or a drawing
@@ -27,6 +28,7 @@ use gtk::{cairo, gdk, glib, graphene, gsk};
 use super::cache::TileCache;
 use super::tiles::tile_area;
 use super::{Canvas, PIXEL_FORMAT};
+use crate::settings::SelectShape;
 
 /// Longest side of a selection texture in device pixels (16 MiB at most); bigger selections
 /// render coarser.
@@ -35,6 +37,8 @@ const MAX_TEXTURE_PX: f64 = 2048.0;
 const GHOST_LIFETIME: Duration = Duration::from_secs(3);
 /// Lasso points closer than this (logical px) to the previous one are skipped.
 const MIN_STEP_PX: f64 = 2.0;
+/// In stroke mode, how close (logical px) the pen must pass to a stroke's ink to select it.
+const TOUCH_RADIUS_PX: f64 = 4.0;
 /// How far outside the selection a drag still grabs it, logical px.
 const GRAB_MARGIN_PX: f64 = 16.0;
 /// A stylus tap wobbles; moving less than this (logical px) is a tap, not a drag.
@@ -73,13 +77,13 @@ fn accent() -> gdk::RGBA {
     gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
 }
 
-/// The loop being drawn, in page points. A rectangle is kept as its four corners, starting
-/// where the drag began.
+/// The loop or path being drawn, in page points. A rectangle is kept as its four corners,
+/// starting where the drag began.
 pub(super) struct LassoPath {
     page: PageId,
     index: usize,
     points: Vec<(f32, f32)>,
-    rect: bool,
+    shape: SelectShape,
 }
 
 /// Strokes drawn into one texture, and the page area (points) it covers.
@@ -181,7 +185,7 @@ impl Canvas {
                 page,
                 index,
                 points: vec![p],
-                rect: self.tools().rect_select.get(),
+                shape: self.tools().select_shape.get(),
             });
             self.queue_draw();
         }
@@ -199,7 +203,7 @@ impl Canvas {
         } else if let Some(path) = imp.lasso.borrow_mut().as_mut()
             && let Some(p) = self.point_on(path.page, x, y)
         {
-            if path.rect {
+            if path.shape == SelectShape::Rectangle {
                 let (x0, y0) = path.points[0];
                 path.points = vec![(x0, y0), (p.0, y0), p, (x0, p.1)];
                 self.queue_draw();
@@ -239,9 +243,12 @@ impl Canvas {
                 .points
                 .iter()
                 .all(|&(x, y)| (x - x0).hypot(y - y0) <= slop);
-            // A tap on the paper only deselects (done when it began).
-            if !tap {
-                self.select_inside(&path);
+            // A tap on the paper only deselects (done when it began); in stroke mode a tap
+            // on a stroke selects it.
+            match (path.shape, tap) {
+                (SelectShape::Stroke, tap) => self.select_touched(&path, tap),
+                (_, true) => {}
+                (_, false) => self.select_inside(&path),
             }
             self.queue_draw();
         }
@@ -357,6 +364,35 @@ impl Canvas {
             points = path.points.len(),
             selected = indices.len(),
             "lasso"
+        );
+        if !indices.is_empty() {
+            self.select(path.page, indices);
+        }
+    }
+
+    /// Selects the strokes `path` runs over, within `TOUCH_RADIUS_PX`; for a `tap`, only the
+    /// topmost one under it.
+    fn select_touched(&self, path: &LassoPath, tap: bool) {
+        let Some(note) = self.note() else { return };
+        let radius = (TOUCH_RADIUS_PX / self.imp().zoom.get()) as f32;
+        let probe: &[(f32, f32)] = if tap { &path.points[..1] } else { &path.points };
+        let indices: Vec<usize> = {
+            let mut note = note.borrow_mut();
+            let Ok(strokes) = note.doc.load_ink(path.index) else {
+                return;
+            };
+            let mut touched =
+                (0..strokes.len()).filter(|&i| ink::touches_path(&strokes[i], probe, radius));
+            if tap {
+                touched.next_back().into_iter().collect()
+            } else {
+                touched.collect()
+            }
+        };
+        tracing::debug!(
+            points = path.points.len(),
+            selected = indices.len(),
+            "stroke select"
         );
         if !indices.is_empty() {
             self.select(path.page, indices);
@@ -737,12 +773,25 @@ impl Canvas {
                     builder.line_to(vx, vy);
                 }
             }
-            if path.rect {
-                builder.close();
+            match path.shape {
+                SelectShape::Stroke => {
+                    // A soft marker line: it selects what it runs over, it doesn't enclose.
+                    let stroke = gsk::Stroke::new((TOUCH_RADIUS_PX * 2.0) as f32);
+                    stroke.set_line_cap(gsk::LineCap::Round);
+                    stroke.set_line_join(gsk::LineJoin::Round);
+                    let mut color = accent();
+                    color.set_alpha(0.35);
+                    snapshot.append_stroke(&builder.to_path(), &stroke, &color);
+                }
+                shape => {
+                    if shape == SelectShape::Rectangle {
+                        builder.close();
+                    }
+                    let stroke = gsk::Stroke::new(1.5);
+                    stroke.set_dash(&[4.0, 4.0]);
+                    snapshot.append_stroke(&builder.to_path(), &stroke, &accent());
+                }
             }
-            let stroke = gsk::Stroke::new(1.5);
-            stroke.set_dash(&[4.0, 4.0]);
-            snapshot.append_stroke(&builder.to_path(), &stroke, &accent());
         }
     }
 

@@ -20,7 +20,7 @@ use crate::canvas::{
     ERASER_WIDTH_RANGE, HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTH_RANGE,
     InputSource, PEN_WIDTH_RANGE, ToolKind,
 };
-use crate::settings::{self, ToolbarPosition};
+use crate::settings::{self, SelectShape, ToolbarPosition};
 use crate::swatch::Swatch;
 use crate::wheel::ColorWheel;
 
@@ -52,7 +52,7 @@ impl CeraWindow {
             tools.pen_width.set(s.pen_width);
             tools.highlighter_width.set(s.highlighter_width);
             tools.pressure.set(s.pressure);
-            tools.rect_select.set(s.rect_select);
+            tools.select_shape.set(s.select_shape);
         });
         self.update_lasso_icon();
         imp.tools.connect_active_name_notify(glib::clone!(
@@ -378,16 +378,18 @@ impl CeraWindow {
         }
     }
 
-    /// Free loop or rectangle.
+    /// Free loop, rectangle or stroke.
     fn show_select_shape(&self) {
         let content = popover_box(gtk::Orientation::Horizontal);
         content.set_spacing(6);
-        let rect = self.imp().tool_state.rect_select.get();
+        let current = self.imp().tool_state.select_shape.get();
         let mut group: Option<gtk::ToggleButton> = None;
-        for (shape_rect, icon, label) in [
-            (false, "cera-lasso-symbolic", "_Lasso"),
-            (true, "cera-select-rect-symbolic", "_Rectangle"),
+        for shape in [
+            SelectShape::Lasso,
+            SelectShape::Rectangle,
+            SelectShape::Stroke,
         ] {
+            let (icon, label, _) = select_shape_info(shape);
             let button = gtk::ToggleButton::builder()
                 .child(
                     &adw::ButtonContent::builder()
@@ -397,7 +399,7 @@ impl CeraWindow {
                         .build(),
                 )
                 .css_classes(["flat"])
-                .active(rect == shape_rect)
+                .active(current == shape)
                 .build();
             button.set_group(group.as_ref());
             group.get_or_insert_with(|| button.clone());
@@ -406,8 +408,8 @@ impl CeraWindow {
                 self,
                 move |b| {
                     if b.is_active() {
-                        win.imp().tool_state.rect_select.set(shape_rect);
-                        settings::update(|s| s.rect_select = shape_rect);
+                        win.imp().tool_state.select_shape.set(shape);
+                        settings::update(|s| s.select_shape = shape);
                         win.update_lasso_icon();
                     }
                 }
@@ -419,18 +421,10 @@ impl CeraWindow {
 
     /// The lasso's tool button shows the selection shape.
     fn update_lasso_icon(&self) {
-        let rect = self.imp().tool_state.rect_select.get();
+        let (icon, _, tooltip) = select_shape_info(self.imp().tool_state.select_shape.get());
         if let Some(toggle) = self.imp().tools.toggle_by_name("lasso") {
-            toggle.set_icon_name(Some(if rect {
-                "cera-select-rect-symbolic"
-            } else {
-                "cera-lasso-symbolic"
-            }));
-            toggle.set_tooltip(if rect {
-                "Rectangle select (L)"
-            } else {
-                "Lasso (L)"
-            });
+            toggle.set_icon_name(Some(icon));
+            toggle.set_tooltip(tooltip);
         }
     }
 
@@ -798,6 +792,23 @@ fn popup(content: &impl IsA<gtk::Widget>, anchor: &impl IsA<gtk::Widget>) -> gtk
     });
     popover.popup();
     popover
+}
+
+/// Icon, popover label and tool bar tooltip for a selection shape.
+fn select_shape_info(shape: SelectShape) -> (&'static str, &'static str, &'static str) {
+    match shape {
+        SelectShape::Lasso => ("cera-lasso-symbolic", "_Lasso", "Lasso (L)"),
+        SelectShape::Rectangle => (
+            "cera-select-rect-symbolic",
+            "_Rectangle",
+            "Rectangle select (L)",
+        ),
+        SelectShape::Stroke => (
+            "cera-select-stroke-symbolic",
+            "_Stroke",
+            "Stroke select (L)",
+        ),
+    }
 }
 
 #[cfg(test)]

@@ -16,8 +16,9 @@ Still yours to do: the stylus (it can't be injected) and a day of real use; the 
 First release, 2026.11.1 (2026-11-01): Linux tarballs for x86_64, i686 and aarch64 built in
 Debian 13 containers (`build-aux/release-linux.sh`); Windows needs a port of `core::file` first.
 After the release, the D1 roadmap items (2026-11-01): editable size slots, a colour wheel,
-slot counts in preferences, rectangle select, layer order for a selection. Checked with
-injected pointer input in the headless compositor; yours to test on the tablet.
+slot counts in preferences, rectangle select, layer order for a selection; then the first
+D2 item, pen (stroke-touch) select as a third lasso mode. Checked with injected pointer input
+in the headless compositor; yours to test on the tablet.
 
 ## M0 — Skeleton
 

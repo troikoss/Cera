@@ -18,6 +18,7 @@ use gtk::{gdk, glib};
 use super::Canvas;
 use super::wet::{Pen, WetStroke};
 use crate::note::SharedNote;
+use crate::settings::SelectShape;
 
 /// Most colour swatches and size slots the tool bar shows (a preference, 3 by default).
 pub const MAX_COLOR_SLOTS: usize = 6;
@@ -100,8 +101,8 @@ pub struct Tools {
     pub eraser_width: Cell<f32>,
     /// The pen's width follows the stylus pressure.
     pub pressure: Cell<bool>,
-    /// The lasso selects with a rectangle instead of a free loop.
-    pub rect_select: Cell<bool>,
+    /// What the lasso draws to select.
+    pub select_shape: Cell<SelectShape>,
 }
 
 impl Default for Tools {
@@ -114,7 +115,7 @@ impl Default for Tools {
             highlighter_width: Cell::new(HIGHLIGHTER_WIDTHS[1]),
             eraser_width: Cell::new(ERASER_WIDTHS[1]),
             pressure: Cell::new(true),
-            rect_select: Cell::new(false),
+            select_shape: Cell::new(SelectShape::Lasso),
         }
     }
 }

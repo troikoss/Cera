@@ -251,6 +251,67 @@ pub fn hits(stroke: &Stroke, p: (f32, f32), radius: f32) -> bool {
         .any(|w| distance_to_segment(p, w[0], w[1]) <= reach(&w[0]).max(reach(&w[1])))
 }
 
+/// Whether a pen of `radius` dragged along `path` (points) touches the stroke's ink. Tested
+/// segment against segment, so a fast drag that samples far apart still catches thin lines.
+pub fn touches_path(stroke: &Stroke, path: &[(f32, f32)], radius: f32) -> bool {
+    let Some((&first, rest)) = path.split_first() else {
+        return false;
+    };
+    if rest.is_empty() {
+        return hits(stroke, first, radius);
+    }
+    let b = stroke.bounds();
+    let points = stroke.points();
+    let reach = |q: &Point| {
+        radius
+            + match stroke.tool() {
+                Tool::Pen => pen_radius(stroke.width(), q.pressure) as f32,
+                Tool::Highlighter => stroke.width() / 2.0,
+            }
+    };
+    let max_reach = points.iter().map(reach).fold(radius, f32::max);
+    path.windows(2).any(|w| {
+        let (p, q) = (w[0], w[1]);
+        let probe = Rect {
+            x0: p.0.min(q.0) - max_reach,
+            y0: p.1.min(q.1) - max_reach,
+            x1: p.0.max(q.0) + max_reach,
+            y1: p.1.max(q.1) + max_reach,
+        };
+        if !b.intersects(&probe) {
+            return false;
+        }
+        let seg = |a: Point, c: Point, r: f32| segments_distance(p, q, (a.x, a.y), (c.x, c.y)) <= r;
+        match points {
+            [only] => seg(*only, *only, reach(only)),
+            _ => points
+                .windows(2)
+                .any(|s| seg(s[0], s[1], reach(&s[0]).max(reach(&s[1])))),
+        }
+    })
+}
+
+/// Shortest distance between segments `p`–`q` and `a`–`b`.
+fn segments_distance(p: (f32, f32), q: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+    let cross = |o: (f32, f32), u: (f32, f32), v: (f32, f32)| {
+        (u.0 - o.0) * (v.1 - o.1) - (u.1 - o.1) * (v.0 - o.0)
+    };
+    let (d1, d2) = (cross(p, q, a), cross(p, q, b));
+    let (d3, d4) = (cross(a, b, p), cross(a, b, q));
+    if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
+        return 0.0;
+    }
+    let pt = |x: (f32, f32)| Point {
+        x: x.0,
+        y: x.1,
+        pressure: 0.0,
+    };
+    distance_to_segment(p, pt(a), pt(b))
+        .min(distance_to_segment(q, pt(a), pt(b)))
+        .min(distance_to_segment(a, pt(p), pt(q)))
+        .min(distance_to_segment(b, pt(p), pt(q)))
+}
+
 fn distance_to_segment(p: (f32, f32), a: Point, b: Point) -> f32 {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let len2 = dx * dx + dy * dy;
@@ -400,6 +461,31 @@ mod tests {
         assert!(hits(&s, (8.0, 10.0), 1.5), "round end");
         let dot = Stroke::new(Tool::Highlighter, Rgba8::BLACK, 10.0, [pts[0]]);
         assert!(hits(&dot, (16.0, 10.0), 2.0));
+    }
+
+    #[test]
+    fn a_dragged_path_touches_what_it_crosses() {
+        let pts = [(10.0, 10.0), (50.0, 10.0)].map(|(x, y)| Point {
+            x,
+            y,
+            pressure: 1.0,
+        });
+        let s = Stroke::new(Tool::Pen, Rgba8::BLACK, 1.0, pts);
+        // Samples far apart on either side of the line: only the segment between them crosses.
+        assert!(touches_path(&s, &[(30.0, 0.0), (30.0, 20.0)], 0.5));
+        assert!(!touches_path(&s, &[(30.0, 0.0), (30.0, 8.0)], 0.5));
+        assert!(
+            touches_path(&s, &[(30.0, 0.0), (30.0, 9.0)], 0.5),
+            "within reach"
+        );
+        assert!(
+            !touches_path(&s, &[(60.0, 0.0), (60.0, 20.0)], 0.5),
+            "past the end"
+        );
+        assert!(touches_path(&s, &[(20.0, 10.2)], 0.5), "a tap");
+        assert!(!touches_path(&s, &[], 0.5));
+        let dot = Stroke::new(Tool::Pen, Rgba8::BLACK, 2.0, [pts[0]]);
+        assert!(touches_path(&dot, &[(0.0, 10.0), (20.0, 10.0)], 0.5));
     }
 
     #[test]

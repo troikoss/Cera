@@ -34,8 +34,8 @@ pub struct Settings {
     pub highlighter_width: f32,
     pub eraser_width: f32,
     pub pressure: bool,
-    /// The lasso tool draws a rectangle.
-    pub rect_select: bool,
+    /// What the lasso tool draws to select.
+    pub select_shape: SelectShape,
     /// Tap with two fingers to undo, three to redo.
     pub finger_taps: bool,
     /// One finger draws; two fingers scroll and zoom.
@@ -72,6 +72,19 @@ impl ToolbarPosition {
     }
 }
 
+/// How the lasso tool selects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SelectShape {
+    /// Strokes mostly inside a free loop.
+    #[default]
+    Lasso,
+    /// Strokes mostly inside a dragged rectangle.
+    Rectangle,
+    /// Strokes the drag passes over, or the one tapped.
+    Stroke,
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -88,7 +101,7 @@ impl Default for Settings {
             highlighter_width: HIGHLIGHTER_WIDTHS[1],
             eraser_width: ERASER_WIDTHS[1],
             pressure: true,
-            rect_select: false,
+            select_shape: SelectShape::Lasso,
             finger_taps: true,
             draw_with_finger: false,
             tile_budget_mib: 128,
@@ -175,6 +188,18 @@ mod tests {
         assert_eq!((s.color_slots, s.size_slots), (3, 3));
         assert_eq!(s.pen_width, 2.0);
         assert_eq!(s.toolbar_position, ToolbarPosition::Bottom);
+        assert_eq!(s.select_shape, SelectShape::Lasso);
+    }
+
+    #[test]
+    fn select_shape_round_trips() {
+        let s = Settings {
+            select_shape: SelectShape::Stroke,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""select_shape":"stroke""#), "{json}");
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), s);
     }
 
     #[test]

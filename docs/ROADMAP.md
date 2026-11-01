@@ -36,9 +36,10 @@ Every add-on waits on the add-on system.
 - [ ] Shape tool — D3 if shapes are saved as plain strokes, D4 as editable objects
 - [ ] Add-space tool: insert or remove vertical space, standalone or as a selection mode — D2
       (D3 if ink pushed off the page spills onto the next one)
-- [ ] More selection tools: rectangle select, pen (stroke-touch) select, next to the lasso —
+- [x] More selection tools: rectangle select, pen (stroke-touch) select, next to the lasso —
       D1 rectangle, D2 pen
   - [x] Rectangle select (a lasso mode: tap the active lasso)
+  - [x] Pen (stroke-touch) select (a lasso mode: swipe over strokes, or tap one)
 - [ ] Photos: insert images onto a page — D4 (first page element; image asset kind, downscale
       on import)
 - [ ] Tool presets: user-made pen-like tools (size, opacity, pressure, tip roundness,

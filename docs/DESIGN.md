@@ -199,7 +199,10 @@ runs first) then takes every touch, draws with one finger, and pans and zooms wi
 second finger within 250 ms turns a just-started stroke into a pinch.
 
 **Lasso** (`crates/app/src/canvas/lasso.rs`): strokes with more than half of their points
-inside the loop (or, in rectangle mode, the dragged rectangle) are selected. Selected strokes leave the page's ink tiles and are drawn from
+inside the loop (or, in rectangle mode, the dragged rectangle) are selected. In stroke mode
+the drag selects every stroke whose ink it passes within 4 px of (segment against segment,
+`ink::touches_path`, so a fast swipe can't skip a thin line), and a tap selects the topmost
+stroke under it. Selected strokes leave the page's ink tiles and are drawn from
 one texture (at most 2048 px, 16 MiB) made when the selection is, so dragging redraws no tile.
 A move, recolour or reorder (Arrange: forward, backward, front, back; a step passes the
 nearest overlapping stroke of the same tool, since highlighters always sit under pen ink;
@@ -333,7 +336,7 @@ AdwApplicationWindow
                │ 1–5 size slots (pen, highlighter, eraser) │ [add page]
 ```
 
-- **Tools:** tap the active pen again → pressure toggle; the active lasso → loop or rectangle.
+- **Tools:** tap the active pen again → pressure toggle; the active lasso → loop, rectangle or stroke.
   Tap the selected swatch again → palette (`AdwWrapBox`) + an HSV colour wheel drawn from
   gradient nodes (`wheel.rs`); the selected size slot → width slider. How many swatches and
   size slots show is a preference. The eraser has size slots (radius in logical px, also used
