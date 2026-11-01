@@ -159,26 +159,41 @@ impl Canvas {
             #[weak(rename_to = canvas)]
             self,
             move |g, x, y| {
-                // GestureStylus reports every button as down/up, so a barrel press while
-                // hovering arrives here too; only the tip starts a stroke.
-                if !is_tip(g) {
+                let event = g.current_event();
+                let buttons = event
+                    .as_ref()
+                    .map_or(gdk::ModifierType::empty(), |e| e.modifier_state());
+                let time = event.map_or(0, |e| e.time());
+                let button = button(g);
+                // GestureStylus reports every button as down/up, so a barrel press arrives
+                // here too; only the tip starts a stroke.
+                if button != gdk::BUTTON_PRIMARY {
+                    let tip_down = buttons.contains(gdk::ModifierType::BUTTON1_MASK);
+                    tracing::debug!(button, tip_down, "stylus button down");
+                    // With the tip down the press resets the gesture, and `cancel` below has
+                    // kept the ink so far; the rest of the stroke erases.
+                    if tip_down && is_barrel(button) {
+                        canvas.erase_from(Sample {
+                            x,
+                            y,
+                            pressure: 1.0,
+                            time,
+                        });
+                    }
                     return;
                 }
                 g.set_state(gtk::EventSequenceState::Claimed);
-                let event = g.current_event();
                 let eraser_end = g
                     .device_tool()
                     .is_some_and(|t| t.tool_type() == gdk::DeviceToolType::Eraser);
-                let barrel = event.as_ref().is_some_and(|e| {
-                    e.modifier_state().intersects(
-                        gdk::ModifierType::BUTTON2_MASK | gdk::ModifierType::BUTTON3_MASK,
-                    )
-                });
+                let barrel = buttons
+                    .intersects(gdk::ModifierType::BUTTON2_MASK | gdk::ModifierType::BUTTON3_MASK);
+                tracing::debug!(eraser_end, barrel, "stylus tip down");
                 let sample = Sample {
                     x,
                     y,
                     pressure: canvas.pressure(g.axis(gdk::AxisUse::Pressure)),
-                    time: event.map_or(0, |e| e.time()),
+                    time,
                 };
                 canvas.begin(sample, eraser_end || barrel);
             }
@@ -198,13 +213,13 @@ impl Canvas {
             #[weak(rename_to = canvas)]
             self,
             move |g, _, _| {
-                if is_tip(g) {
+                if button(g) == gdk::BUTTON_PRIMARY {
                     canvas.end();
                 }
             }
         ));
-        // A barrel press mid-stroke can reset the gesture; finish the stroke rather than
-        // leave it hanging.
+        // A barrel press mid-stroke resets the gesture (GestureSingle tracks one button);
+        // finish the stroke rather than leave it hanging. Motion and up still arrive.
         stylus.connect_cancel(glib::clone!(
             #[weak(rename_to = canvas)]
             self,
@@ -338,6 +353,16 @@ impl Canvas {
             last: s,
         });
         self.queue_draw();
+    }
+
+    /// The barrel button pressed with the tip down: what was drawn so far stays and the rest
+    /// of the stroke erases.
+    fn erase_from(&self, s: Sample) {
+        if self.imp().erasing.get() {
+            return;
+        }
+        self.end();
+        self.begin(s, true);
     }
 
     fn extend(&self, samples: &[Sample]) {
@@ -645,12 +670,16 @@ fn stylus_samples(g: &gtk::GestureStylus, x: f64, y: f64) -> Vec<Sample> {
     out
 }
 
-/// Whether the event that started or ended the gesture is the tip (button 1), not a barrel
-/// button.
-fn is_tip(g: &gtk::GestureStylus) -> bool {
+/// The button of the stylus down or up event: 1 is the tip.
+fn button(g: &gtk::GestureStylus) -> u32 {
     g.current_event()
         .and_then(|e| e.downcast::<gdk::ButtonEvent>().ok())
-        .is_none_or(|b| b.button() == gdk::BUTTON_PRIMARY)
+        .map_or(gdk::BUTTON_PRIMARY, |b| b.button())
+}
+
+/// GDK reports the barrel buttons (`BTN_STYLUS`, `BTN_STYLUS2`) as middle and right.
+fn is_barrel(button: u32) -> bool {
+    button == gdk::BUTTON_MIDDLE || button == gdk::BUTTON_SECONDARY
 }
 
 /// Mouse, touchpad or trackpoint; the stylus and touch are handled elsewhere.

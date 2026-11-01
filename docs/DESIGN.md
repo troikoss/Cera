@@ -178,7 +178,7 @@ Code: `crates/render/src/ink.rs`.
 | --- | --- | --- |
 | Stylus tip | `GestureStylus`, `stylus_only = true` | draw with active tool; points from `backlog()` + current event (GTK coalesces motion events, the backlog has the full-rate samples); pressure from `axis(Pressure)` |
 | Stylus eraser end | same, `device_tool().tool_type() == Eraser` | eraser regardless of selected tool |
-| Stylus barrel button | same, button mask (`BUTTON2`/`BUTTON3`) at pen-down | hold → temporary eraser (configurable: lasso). `GestureStylus` emits *down*/*up* for every button, so a barrel press while hovering also arrives as *down*: only button 1 starts or ends a stroke |
+| Stylus barrel button | same, button mask (`BUTTON2`/`BUTTON3`) at pen-down | hold → temporary eraser (configurable: lasso); pressed with the tip down, the ink so far stays and the rest of the stroke erases. `GestureStylus` emits *down*/*up* for every button, so a barrel press also arrives as *down* (GDK: `BTN_STYLUS` → button 2, `BTN_STYLUS2` → 3): only button 1 starts or ends a stroke. A press mid-stroke resets the gesture (*cancel*), but *motion* and *up* keep coming |
 | One finger | `GtkScrolledWindow`'s own touch pan | scroll with kinetic momentum |
 | Two fingers | `GestureZoom` | pinch zoom around the centroid |
 | Two-/three-finger tap | legacy controller on the tab view (`touch.rs`) | undo / redo (setting); taps are watched, not claimed |
