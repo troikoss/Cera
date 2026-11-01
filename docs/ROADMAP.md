@@ -28,9 +28,11 @@ Every add-on waits on the add-on system.
 ### Canvas and tools
 
 - [ ] Context menu on the canvas (hold or right-click); home for actions that aren't tools,
-      such as linking — D2 (the secondary button pans today; a hold must not fight drawing)
+      such as linking — D2 (a hold must not fight drawing). Started: the lasso's actions open
+      from a tap on the selection (or on empty paper, to paste) and from a mouse right-click;
+      no touch hold yet
   - [x] Layer order for a selection: bring forward, send backward, bring to front, send to
-        back — D1 (for now an Arrange menu in the lasso's tool bar section, Ctrl+] / Ctrl+[)
+        back — D1 (in the context menu; Ctrl+] / Ctrl+[)
 - [ ] Text tool — D4 (element model, Pango in the render worker, on-screen keyboard)
 - [ ] Shape tool — D3 if shapes are saved as plain strokes, D4 as editable objects
 - [ ] Add-space tool: insert or remove vertical space, standalone or as a selection mode — D2

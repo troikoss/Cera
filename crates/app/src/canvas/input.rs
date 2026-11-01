@@ -298,6 +298,34 @@ impl Canvas {
         ));
         self.add_controller(mouse);
 
+        // A right click opens the context menu: at the selection if it is on it.
+        let context = gtk::GestureClick::new();
+        context.set_button(gdk::BUTTON_SECONDARY);
+        context.connect_pressed(glib::clone!(
+            #[weak(rename_to = canvas)]
+            self,
+            move |g, _, x, y| {
+                let mouse = g.current_event().is_some_and(|e| {
+                    e.device_tool().is_none()
+                        && matches!(
+                            e.device().map(|d| d.source()),
+                            Some(gdk::InputSource::Mouse | gdk::InputSource::Touchpad)
+                        )
+                });
+                if !mouse {
+                    // The stylus's barrel button erases instead.
+                    g.set_state(gtk::EventSequenceState::Denied);
+                    return;
+                }
+                g.set_state(gtk::EventSequenceState::Claimed);
+                let on_selection = canvas
+                    .selection_view_rect()
+                    .filter(|&(rx, ry, w, h)| x >= rx && x <= rx + w && y >= ry && y <= ry + h);
+                canvas.emit_context_menu(on_selection.unwrap_or((x, y, 1.0, 1.0)));
+            }
+        ));
+        self.add_controller(context);
+
         // Middle-drag pans.
         let pan = gtk::GestureDrag::new();
         pan.set_button(gdk::BUTTON_MIDDLE);

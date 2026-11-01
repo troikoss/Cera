@@ -330,16 +330,17 @@ AdwApplicationWindow
             ├─ GtkScrolledWindow > Canvas
             └─ floating pill (bottom centre):
                AdwToggleGroup [pen | highlighter | eraser | lasso] │ 1–6 colour swatches
-               │ 1–5 size slots (pen, highlighter, eraser) │ [cut copy paste arrange delete]
-               (lasso only) │ [add page]
+               │ 1–5 size slots (pen, highlighter, eraser) │ [add page]
 ```
 
 - **Tools:** tap the active pen again → pressure toggle; the active lasso → loop or rectangle.
   Tap the selected swatch again → palette (`AdwWrapBox`) + an HSV colour wheel drawn from
   gradient nodes (`wheel.rs`); the selected size slot → width slider. How many swatches and
   size slots show is a preference. The eraser has size slots (radius in logical px, also used
-  by the stylus's eraser end and barrel) and no swatches. With the lasso, the swatches recolour the selection and cut, copy,
-  paste, arrange and delete buttons appear. Tool settings and slots are app settings
+  by the stylus's eraser end and barrel) and no swatches. With the lasso, the swatches recolour the selection; cut, copy,
+  paste, delete and arrange are in a context menu (`GtkPopoverMenu`, entries hidden when
+  their action is disabled): tap the selection without dragging, tap empty paper to paste,
+  or right-click with the mouse anywhere. Tool settings and slots are app settings
   (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.
 - **Pages button:** `AdwDialog` (a bottom sheet when narrow) with a `GtkGridView` of page

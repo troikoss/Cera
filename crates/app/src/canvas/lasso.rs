@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Lasso selection (DESIGN.md §9): draw a loop (or, in rectangle mode, drag out a rectangle)
 //! on a page to select the strokes mostly inside it, then drag to move them, or delete,
-//! recolour, reorder, cut, copy and paste (also into other notes).
+//! recolour, reorder, cut, copy and paste (also into other notes). Tapping the selection
+//! (or empty paper, to paste) asks the window for the context menu with those actions.
 //!
 //! While strokes are selected they are left out of the page's ink tiles and drawn from one
 //! texture, rendered once when the selection is made, so dragging costs nothing per frame
@@ -32,6 +33,8 @@ const GHOST_LIFETIME: Duration = Duration::from_secs(3);
 const MIN_STEP_PX: f64 = 2.0;
 /// How far outside the selection a drag still grabs it, logical px.
 const GRAB_MARGIN_PX: f64 = 16.0;
+/// A stylus tap wobbles; moving less than this (logical px) is a tap, not a drag.
+const TAP_SLOP_PX: f64 = 4.0;
 
 fn accent() -> gdk::RGBA {
     gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
@@ -44,6 +47,8 @@ pub(super) struct LassoPath {
     index: usize,
     points: Vec<(f32, f32)>,
     rect: bool,
+    /// Where it started, in widget coordinates (for a tap's context menu).
+    start: (f64, f64),
 }
 
 /// Strokes drawn into one texture, and the page area (points) it covers.
@@ -146,6 +151,7 @@ impl Canvas {
                 index,
                 points: vec![p],
                 rect: self.tools().rect_select.get(),
+                start: (x, y),
             });
             self.queue_draw();
         }
@@ -183,17 +189,50 @@ impl Canvas {
             s.drag_from.take()?;
             Some(std::mem::take(&mut s.offset))
         });
+        let slop = (TAP_SLOP_PX / imp.zoom.get()) as f32;
         if let Some(offset) = dragged {
-            if offset != (0.0, 0.0) {
+            if offset.0.hypot(offset.1) > slop {
                 self.move_selection(offset);
+            } else if let Some(r) = self.selection_view_rect() {
+                self.emit_context_menu(r);
             }
             self.queue_draw();
             return;
         }
         if let Some(path) = imp.lasso.take() {
-            self.select_inside(&path);
+            let (x0, y0) = path.points[0];
+            let tap = path
+                .points
+                .iter()
+                .all(|&(x, y)| (x - x0).hypot(y - y0) <= slop);
+            if tap {
+                let (x, y) = path.start;
+                self.emit_context_menu((x, y, 1.0, 1.0));
+            } else {
+                self.select_inside(&path);
+            }
             self.queue_draw();
         }
+    }
+
+    /// The selection's frame in widget coordinates, `(x, y, width, height)`.
+    pub(super) fn selection_view_rect(&self) -> Option<(f64, f64, f64, f64)> {
+        let imp = self.imp();
+        let view = self.view()?;
+        let sel = imp.selection.borrow();
+        let s = sel.as_ref()?;
+        let doc = imp.doc.borrow();
+        let doc = doc.as_ref()?;
+        let page = doc.layout.page_rect(doc.page_index(s.page)?);
+        let b = s.bounds.translated(s.offset.0, s.offset.1);
+        let (x0, y0) = view.to_view(page.x + f64::from(b.x0), page.y + f64::from(b.y0));
+        let (x1, y1) = view.to_view(page.x + f64::from(b.x1), page.y + f64::from(b.y1));
+        Some((x0, y0, x1 - x0, y1 - y0))
+    }
+
+    /// Asks for the selection's context menu, pointing at `(x, y, width, height)`.
+    pub(super) fn emit_context_menu(&self, (x, y, w, h): (f64, f64, f64, f64)) {
+        self.emit_by_name::<()>("context-menu", &[&x, &y, &w, &h]);
     }
 
     /// Drops a half-drawn loop or drag (a touch that turned into a pinch).

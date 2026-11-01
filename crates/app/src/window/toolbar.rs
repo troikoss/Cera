@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The floating tool bar (DESIGN.md §9): tools, colour swatches, size slots, the lasso's
-//! actions and "add page". How many swatches and size slots it shows is a preference; the
+//! The floating tool bar (DESIGN.md §9): tools, colour swatches, size slots and "add page"
+//! (the lasso's actions are in the canvas's context menu, `show_context_menu`). How many swatches and size slots it shows is a preference; the
 //! eraser has size slots but no swatches. Tapping the active pen again opens its pressure
 //! setting, the active lasso its shape (free loop or rectangle); tapping the selected swatch
 //! again opens the palette and colour wheel for that slot, the selected size slot a slider.
@@ -237,7 +237,6 @@ impl CeraWindow {
         let palette = self.palette();
         let current = imp.tool_state.color();
         let selection = self.canvas().is_some_and(|c| c.has_selection());
-        imp.selection_box.set_visible(tool == ToolKind::Lasso);
         imp.swatch_box.set_visible(tool != ToolKind::Eraser);
         for (i, (button, swatch)) in imp.swatches.borrow().iter().enumerate() {
             swatch.set_color(rgba(palette[i]));
@@ -532,6 +531,44 @@ impl CeraWindow {
             tools.set_color(color);
         }
         self.update_toolbar();
+    }
+}
+
+impl CeraWindow {
+    /// The lasso's actions in a menu pointing at `rect` (canvas coordinates): cut, copy,
+    /// delete and arrange with a selection, paste with something to paste. Disabled entries
+    /// are hidden, so with nothing to act on no menu opens.
+    pub(super) fn show_context_menu(
+        &self,
+        canvas: &crate::canvas::Canvas,
+        rect: (f64, f64, f64, f64),
+    ) {
+        if !canvas.has_selection() && !crate::canvas::has_clipboard() {
+            return;
+        }
+        self.update_note_actions();
+        let imp = self.imp();
+        let anchor = &*imp.note_overlay;
+        let (x, y, w, h) = rect;
+        let Some(origin) =
+            canvas.compute_point(anchor, &gtk::graphene::Point::new(x as f32, y as f32))
+        else {
+            return;
+        };
+        let menu = gtk::PopoverMenu::from_model(Some(&*imp.context_menu));
+        menu.set_position(gtk::PositionType::Top);
+        menu.set_parent(anchor);
+        menu.set_pointing_to(Some(&gdk::Rectangle::new(
+            origin.x() as i32,
+            origin.y() as i32,
+            (w as i32).max(1),
+            (h as i32).max(1),
+        )));
+        menu.connect_closed(|m| {
+            let m = m.clone();
+            glib::idle_add_local_once(move || m.unparent());
+        });
+        menu.popup();
     }
 }
 

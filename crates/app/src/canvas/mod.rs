@@ -209,6 +209,11 @@ mod imp {
                     glib::subclass::Signal::builder("changed").build(),
                     // A lasso selection was made or ended.
                     glib::subclass::Signal::builder("selection-changed").build(),
+                    // The selection was tapped, or the canvas right-clicked: show the
+                    // selection's actions pointing at (x, y, width, height).
+                    glib::subclass::Signal::builder("context-menu")
+                        .param_types([f64::static_type(); 4])
+                        .build(),
                 ]
             })
         }

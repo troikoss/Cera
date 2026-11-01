@@ -70,7 +70,7 @@ mod imp {
         #[template_child]
         pub size_box: TemplateChild<gtk::Box>,
         #[template_child]
-        pub selection_box: TemplateChild<gtk::Box>,
+        pub context_menu: TemplateChild<gio::MenuModel>,
         pub(super) tool_state: Rc<Tools>,
         pub(super) swatches: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
         pub(super) sizes: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,

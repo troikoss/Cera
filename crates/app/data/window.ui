@@ -249,64 +249,6 @@
                                     <property name="spacing">6</property>
                                   </object>
                                 </child>
-                                <!-- Shown with the lasso. -->
-                                <child>
-                                  <object class="GtkBox" id="selection_box">
-                                    <property name="spacing">6</property>
-                                    <property name="visible">False</property>
-                                    <child>
-                                      <object class="GtkButton">
-                                        <property name="icon-name">edit-cut-symbolic</property>
-                                        <property name="tooltip-text" translatable="yes">Cut</property>
-                                        <property name="action-name">win.cut</property>
-                                        <style>
-                                          <class name="flat"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkButton">
-                                        <property name="icon-name">edit-copy-symbolic</property>
-                                        <property name="tooltip-text" translatable="yes">Copy</property>
-                                        <property name="action-name">win.copy</property>
-                                        <style>
-                                          <class name="flat"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkButton">
-                                        <property name="icon-name">edit-paste-symbolic</property>
-                                        <property name="tooltip-text" translatable="yes">Paste</property>
-                                        <property name="action-name">win.paste</property>
-                                        <style>
-                                          <class name="flat"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkMenuButton">
-                                        <property name="icon-name">cera-arrange-symbolic</property>
-                                        <property name="tooltip-text" translatable="yes">Arrange</property>
-                                        <property name="menu-model">arrange_menu</property>
-                                        <property name="direction">up</property>
-                                        <style>
-                                          <class name="flat"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkButton">
-                                        <property name="icon-name">user-trash-symbolic</property>
-                                        <property name="tooltip-text" translatable="yes">Delete</property>
-                                        <property name="action-name">win.delete-selection</property>
-                                        <style>
-                                          <class name="flat"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
                                 <child>
                                   <object class="GtkSeparator">
                                     <property name="orientation">vertical</property>
@@ -337,27 +279,54 @@
       </object>
     </property>
   </template>
-  <menu id="arrange_menu">
+  <!-- The lasso's actions: tap the selection, or right-click the canvas. -->
+  <menu id="context_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Cu_t</attribute>
+        <attribute name="action">win.cut</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_Copy</attribute>
+        <attribute name="action">win.copy</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_Paste</attribute>
+        <attribute name="action">win.paste</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_Delete</attribute>
+        <attribute name="action">win.delete-selection</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+    </section>
     <section>
       <item>
         <attribute name="label" translatable="yes">Bring to _Front</attribute>
         <attribute name="action">win.arrange</attribute>
         <attribute name="target">front</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
       </item>
       <item>
         <attribute name="label" translatable="yes">Bring For_ward</attribute>
         <attribute name="action">win.arrange</attribute>
         <attribute name="target">forward</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
       </item>
       <item>
         <attribute name="label" translatable="yes">Send Back_ward</attribute>
         <attribute name="action">win.arrange</attribute>
         <attribute name="target">backward</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
       </item>
       <item>
         <attribute name="label" translatable="yes">Send to _Back</attribute>
         <attribute name="action">win.arrange</attribute>
         <attribute name="target">back</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
       </item>
     </section>
   </menu>

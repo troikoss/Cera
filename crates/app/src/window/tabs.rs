@@ -177,6 +177,22 @@ impl CeraWindow {
                 }
             ),
         );
+        canvas.connect_local(
+            "context-menu",
+            false,
+            glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                #[weak]
+                canvas,
+                #[upgrade_or_default]
+                move |args| {
+                    let v = |i: usize| args[i].get::<f64>().unwrap_or_default();
+                    win.show_context_menu(&canvas, (v(1), v(2), v(3), v(4)));
+                    None
+                }
+            ),
+        );
         for property in ["current-page", "page-count"] {
             canvas.connect_notify_local(
                 Some(property),
