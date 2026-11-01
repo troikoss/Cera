@@ -677,7 +677,8 @@ fn button(g: &gtk::GestureStylus) -> u32 {
         .map_or(gdk::BUTTON_PRIMARY, |b| b.button())
 }
 
-/// GDK reports the barrel buttons (`BTN_STYLUS`, `BTN_STYLUS2`) as middle and right.
+/// GDK reports the barrel buttons (`BTN_STYLUS`, `BTN_STYLUS2`) as middle and right; the
+/// S Pen's arrives as right under GNOME 50.
 fn is_barrel(button: u32) -> bool {
     button == gdk::BUTTON_MIDDLE || button == gdk::BUTTON_SECONDARY
 }

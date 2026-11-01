@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{gio, glib};
+use gtk::{gdk, gio, glib};
 
 use crate::APP_ID;
 use crate::window::CeraWindow;
@@ -24,6 +24,18 @@ mod imp {
     impl ApplicationImpl for CeraApplication {
         fn startup(&self) {
             self.parent_startup();
+            // GTK falls back to X11 when WAYLAND_DISPLAY names a missing socket, as a
+            // leftover from the headless session does; the pen's barrel button doesn't
+            // erase there.
+            if let Some(backend) = gdk::Display::default().map(|d| d.backend())
+                && !backend.is_wayland()
+            {
+                tracing::warn!(
+                    ?backend,
+                    wayland_display = ?std::env::var("WAYLAND_DISPLAY").ok(),
+                    "not running on Wayland: the pen's barrel button won't erase"
+                );
+            }
             gtk::Window::set_default_icon_name(APP_ID);
             self.obj().setup_actions();
         }
