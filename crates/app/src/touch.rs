@@ -105,7 +105,8 @@ pub fn controller(canvas: impl Fn() -> Option<Canvas> + 'static) -> gtk::EventCo
                                 start_distance: distance.max(1.0),
                             }
                         }
-                        (Mode::Drawing(s), _) => Mode::Drawing(s),
+                        // Extra fingers don't interrupt a stroke or a pinch.
+                        (mode @ (Mode::Drawing(_) | Mode::Pinching { .. }), _) => mode,
                         _ => Mode::Ignoring,
                     };
                 }

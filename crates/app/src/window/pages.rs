@@ -409,7 +409,8 @@ impl Sorter {
             history.remove_page(doc, index)
         });
         if done.is_some() {
-            self.reload(Some(index.saturating_sub(usize::from(index > 0)) as u32));
+            // The page that took its place, or the new last page.
+            self.reload(Some(index as u32));
         }
     }
 
