@@ -398,10 +398,14 @@ AdwApplicationWindow
   item: a `GtkModelButton` claims a touch on press, which cancels the scrolled window's
   kinetic drag, so each item's click gesture is swapped for one that activates on release;
   palm rejection leaves touches on popovers alone. Opened away from the selection, Paste pastes centred on
-  that point. Change style opens a popover at the press with the selection's style, for now
-  only its colour: presets (the highlighter tints when the selection is all highlights) and
-  the colour wheel. Every stroke keeps its own opacity; each pick is one undo step
-  and redraws the selection's texture once. Presets, their slots and the secondary action are app settings
+  that point. Change style opens a popover at the press with the selection's style: a button per
+  non-eraser preset (gives every selected stroke its colour, opacity, width, tip and layer,
+  and full pressure if the preset has pressure off), a palette (the highlighter tints when
+  the selection is all highlights) and the colour wheel (each stroke keeps its own opacity),
+  and sliders beside the wheel for width (the first stroke takes the value, the others keep
+  their proportion to it), tip and, for an all-highlight selection, opacity. Each pick, and
+  each slider once it rests for 250 ms, is one undo step (`restyle_selection`) and redraws
+  the selection's texture once; the selection's bounds follow the new widths. Presets, their slots and the secondary action are app settings
   (`~/.config/cera/settings.json`, version 2; version 1's per-tool fields become the three
   default presets). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.

@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cera_core::Rgba8;
+use cera_core::{Rgba8, StrokeStyle};
 use gtk::{gdk, gio, glib};
 
 use super::{CeraWindow, rgba};
@@ -711,28 +711,23 @@ impl CeraWindow {
 }
 
 impl CeraWindow {
-    /// The selection's style, for now its colour: presets and a colour wheel at the press
-    /// `at` that opened the context menu. Highlighter strokes keep their translucency.
+    /// The selection's style in a popover at the press `at` that opened the context menu:
+    /// the presets (each gives the selection its colour, opacity, width, tip and layer), a
+    /// palette and colour wheel (each stroke keeps its opacity), and sliders for width, tip
+    /// and, when the selection is all highlights, opacity.
     pub(super) fn show_style_popover(&self, at: (f64, f64), source: InputSource) {
         let Some(canvas) = self.canvas() else { return };
-        let Some((current, highlighter)) = canvas.selection_style() else {
+        let Some(current) = canvas.selection_style() else {
             return;
         };
-        let presets: &[Rgba8] = if highlighter {
-            &HIGHLIGHTER_COLORS
-        } else {
-            &PEN_PRESETS
-        };
-        let wrap = adw::WrapBox::builder()
-            .child_spacing(6)
-            .line_spacing(6)
-            .natural_line_length(6 * 46)
-            .justify(adw::JustifyMode::Spread)
-            .build();
         let content = popover_box(gtk::Orientation::Vertical);
-        content.append(&wrap);
-        let wheel = ColorWheel::new(Rgba8 { a: 255, ..current });
-        content.append(&wheel);
+        let scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .propagate_natural_width(true)
+            .max_content_height(520)
+            .child(&content)
+            .build();
 
         let anchor = &*self.imp().note_overlay;
         let Some(origin) =
@@ -741,7 +736,7 @@ impl CeraWindow {
             return;
         };
         let popover = gtk::Popover::builder()
-            .child(&content)
+            .child(&scroll)
             .position(if source == InputSource::Mouse {
                 gtk::PositionType::Bottom
             } else {
@@ -759,7 +754,68 @@ impl CeraWindow {
             let p = p.clone();
             glib::idle_add_local_once(move || p.unparent());
         });
-        for &color in presets {
+
+        // Presets: everything but erasers.
+        let presets = gtk::FlowBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .column_spacing(6)
+            .row_spacing(6)
+            .max_children_per_line(3)
+            .homogeneous(true)
+            .build();
+        let pens: Vec<Preset> = settings::with(|s| {
+            s.presets
+                .iter()
+                .filter(|p| !p.role.is_eraser())
+                .cloned()
+                .collect()
+        });
+        for preset in pens {
+            let swatch = Swatch::new(rgba(preset.color));
+            swatch.set_size(14);
+            let label = gtk::Label::builder()
+                .label(&preset.name)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .build();
+            let inner = gtk::Box::builder().spacing(8).build();
+            inner.append(&gtk::Image::from_icon_name(preset.role.icon()));
+            inner.append(&label);
+            inner.append(&swatch);
+            let button = gtk::Button::builder()
+                .child(&inner)
+                .tooltip_text(format!("Draw like {}", preset.name))
+                .build();
+            button.connect_clicked(glib::clone!(
+                #[weak]
+                canvas,
+                #[weak]
+                popover,
+                move |_| {
+                    let (style, color) = (preset.stroke_style(), preset.ink_color());
+                    canvas.restyle_selection(|st| {
+                        st.restyled(style, color, preset.width, !preset.pressure)
+                    });
+                    popover.popdown();
+                }
+            ));
+            presets.append(&button);
+        }
+        content.append(&presets);
+        content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+
+        // Colour.
+        let palette: &[Rgba8] = if current.highlights {
+            &HIGHLIGHTER_COLORS
+        } else {
+            &PEN_PRESETS
+        };
+        let wrap = adw::WrapBox::builder()
+            .child_spacing(6)
+            .line_spacing(6)
+            .natural_line_length(6 * 46)
+            .justify(adw::JustifyMode::Spread)
+            .build();
+        for &color in palette {
             let button = gtk::Button::builder()
                 .child(&Swatch::new(rgba(color)))
                 .css_classes(["flat", "circular"])
@@ -769,15 +825,15 @@ impl CeraWindow {
             button.connect_clicked(glib::clone!(
                 #[weak]
                 canvas,
-                #[weak]
-                popover,
-                move |_| {
-                    canvas.recolour_selection(color);
-                    popover.popdown();
-                }
+                move |_| canvas.recolour_selection(color)
             ));
             wrap.append(&button);
         }
+        content.append(&wrap);
+        let wheel = ColorWheel::new(Rgba8 {
+            a: 255,
+            ..current.color
+        });
         // Taken when the finger lifts, so each pick is one undo step and the selection's
         // texture is redrawn once, not on every motion.
         wheel.connect_picked(glib::clone!(
@@ -785,8 +841,111 @@ impl CeraWindow {
             canvas,
             move |w| canvas.recolour_selection(w.color())
         ));
+
+        // Width, tip and opacity, each applied once its slider rests.
+        let grid = gtk::Grid::builder()
+            .column_spacing(12)
+            .row_spacing(6)
+            .build();
+        let (mut min, mut max) = if current.highlights {
+            Role::Highlighter.width_range()
+        } else {
+            Role::Ink.width_range()
+        };
+        (min, max) = (min.min(current.width), max.max(current.width));
+        let width = style_slider(&grid, 0, "Width", (min, max), 0.1, current.width);
+        width.set_format_value_func(|_, v| format!("{} pt", fmt_pt(v as f32)));
+        // The first stroke takes the slider's width and the others keep their proportion to
+        // it, so a highlight and the ink beside it both grow.
+        let first = current.width.max(0.01);
+        on_rest(&width, &canvas, move |canvas, w| {
+            let k = w / first;
+            canvas
+                .restyle_selection(|st| st.restyled(st.style(), st.color(), st.width() * k, false));
+        });
+        let tip = style_slider(&grid, 1, "Tip", (0.0, 1.0), 0.05, current.roundness);
+        tip.set_draw_value(false);
+        tip.add_mark(0.0, gtk::PositionType::Bottom, Some("Square"));
+        tip.add_mark(1.0, gtk::PositionType::Bottom, Some("Round"));
+        on_rest(&tip, &canvas, |canvas, r| {
+            let roundness = (r.clamp(0.0, 1.0) * 255.0).round() as u8;
+            canvas.restyle_selection(|st| {
+                let style = StrokeStyle {
+                    roundness,
+                    ..st.style()
+                };
+                st.restyled(style, st.color(), st.width(), false)
+            });
+        });
+        let alpha = f32::from(current.color.a) / 255.0;
+        let opacity = style_slider(&grid, 2, "Opacity", (0.05, 1.0), 0.05, alpha);
+        opacity.set_format_value_func(|_, v| format!("{:.0} %", v * 100.0));
+        // Ink is always opaque.
+        opacity.set_sensitive(current.highlights);
+        if let Some(label) = grid.child_at(0, 2) {
+            label.set_sensitive(current.highlights);
+        }
+        on_rest(&opacity, &canvas, |canvas, o| {
+            let a = (o.clamp(0.0, 1.0) * 255.0).round() as u8;
+            canvas.restyle_selection(|st| st.with_color(Rgba8 { a, ..st.color() }));
+        });
+        // The sliders sit beside the wheel, which keeps the popover short enough for a
+        // landscape tablet.
+        let row = gtk::Box::builder().spacing(18).build();
+        grid.set_valign(gtk::Align::Center);
+        grid.set_width_request(260);
+        row.append(&wheel);
+        row.append(&grid);
+        content.append(&row);
         popover.popup();
     }
+}
+
+/// A labelled slider in row `row` of a Change style grid.
+fn style_slider(
+    grid: &gtk::Grid,
+    row: i32,
+    title: &str,
+    (min, max): (f32, f32),
+    step: f64,
+    value: f32,
+) -> gtk::Scale {
+    let label = gtk::Label::builder().label(title).xalign(0.0).build();
+    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, min.into(), max.into(), step);
+    scale.set_value(value.into());
+    scale.set_round_digits(2);
+    scale.set_draw_value(true);
+    scale.set_value_pos(gtk::PositionType::Right);
+    scale.set_hexpand(true);
+    grid.attach(&label, 0, row, 1, 1);
+    grid.attach(&scale, 1, row, 1, 1);
+    scale
+}
+
+/// Runs `f` with the slider's value once it has rested for a quarter second, so a drag is
+/// one undo step and one redraw of the selection rather than one per motion.
+fn on_rest(
+    scale: &gtk::Scale,
+    canvas: &crate::canvas::Canvas,
+    f: impl Fn(&crate::canvas::Canvas, f32) + 'static,
+) {
+    let pending = Rc::new(std::cell::RefCell::new(None::<glib::SourceId>));
+    let f = Rc::new(f);
+    let canvas = canvas.downgrade();
+    scale.connect_value_changed(move |s| {
+        if let Some(id) = pending.borrow_mut().take() {
+            id.remove();
+        }
+        let value = s.value() as f32;
+        let (f, canvas, again) = (f.clone(), canvas.clone(), pending.clone());
+        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
+            again.borrow_mut().take();
+            if let Some(canvas) = canvas.upgrade() {
+                f(&canvas, value);
+            }
+        });
+        *pending.borrow_mut() = Some(id);
+    });
 }
 
 /// Lets a finger scroll the menu with GTK's own kinetic scrolling, starting on an item too.

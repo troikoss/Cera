@@ -194,6 +194,22 @@ impl Stroke {
             ..self.clone()
         }
     }
+
+    /// The same points drawn another way. With `full_pressure`, every point is at full
+    /// pressure, as a preset with pressure off draws.
+    pub fn restyled(
+        &self,
+        style: StrokeStyle,
+        color: Rgba8,
+        width: f32,
+        full_pressure: bool,
+    ) -> Stroke {
+        let points = self.points.iter().map(|p| Point {
+            pressure: if full_pressure { 1.0 } else { p.pressure },
+            ..*p
+        });
+        Stroke::new(style, color, width, points)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -593,6 +609,17 @@ mod tests {
             }
         );
         assert_eq!(moved.bounds(), s.bounds().translated(10.0, -1.0));
+        let square = StrokeStyle {
+            roundness: 0,
+            ..StrokeStyle::PEN
+        };
+        let wide = s.restyled(square, Rgba8::WHITE, 10.0, true);
+        assert_eq!(wide.style(), square);
+        assert!(wide.points().iter().all(|p| p.pressure == 1.0));
+        assert!(
+            wide.bounds().x1 > s.bounds().x1,
+            "bounds follow the width and the nib"
+        );
         let red = s.with_color(Rgba8::new(255, 0, 0, 90));
         assert_eq!(red.points(), s.points());
         assert_eq!(red.color(), Rgba8::new(255, 0, 0, 90));

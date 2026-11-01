@@ -118,6 +118,16 @@ pub(super) struct Selection {
     space: Option<(f32, Side)>,
 }
 
+/// What Change style starts from: the selection's first stroke.
+#[derive(Clone, Copy, Debug)]
+pub struct SelectionStyle {
+    pub color: Rgba8,
+    pub width: f32,
+    pub roundness: f32,
+    /// Every selected stroke is a highlight (not ink).
+    pub highlights: bool,
+}
+
 /// Deselected strokes shown from their texture until the tiles under them include them.
 pub(super) struct Ghost {
     page: PageId,
@@ -707,21 +717,25 @@ impl Canvas {
 
     /// Recolours the selection. Each stroke keeps its own opacity.
     pub fn recolour_selection(&self, color: Rgba8) {
+        self.restyle_selection(|st| {
+            st.with_color(Rgba8 {
+                a: st.color().a,
+                ..color
+            })
+        });
+    }
+
+    /// Replaces each selected stroke with `f` of it, as one undo step. The selection's
+    /// bounds follow (a new width or nib changes them) and its texture is redrawn once.
+    pub fn restyle_selection(&self, f: impl Fn(&Stroke) -> Stroke) {
         let imp = self.imp();
         let Some(note) = self.note() else { return };
         let mut sel = imp.selection.borrow_mut();
         let Some(s) = sel.as_mut() else { return };
-        let recoloured: Vec<Arc<Stroke>> = s
-            .strokes
-            .iter()
-            .map(|st| {
-                let c = Rgba8 {
-                    a: st.color().a,
-                    ..color
-                };
-                Arc::new(st.with_color(c))
-            })
-            .collect();
+        let restyled: Vec<Arc<Stroke>> = s.strokes.iter().map(|st| Arc::new(f(st))).collect();
+        if restyled == s.strokes {
+            return;
+        }
         let replaced = {
             let mut note = note.borrow_mut();
             let crate::note::Note { history, doc, .. } = &mut *note;
@@ -731,16 +745,19 @@ impl Canvas {
                 s.indices
                     .iter()
                     .copied()
-                    .zip(recoloured.iter().cloned())
+                    .zip(restyled.iter().cloned())
                     .collect(),
             )
         };
         if let Err(e) = replaced {
-            tracing::warn!("cannot recolour the selection: {e}");
+            tracing::warn!("cannot change the selection's style: {e}");
             return;
         }
-        s.texture = render_strokes(&recoloured, s.bounds, self.target_scale().get());
-        s.strokes = recoloured;
+        if let Some(bounds) = restyled.iter().map(|st| st.bounds()).reduce(Rect::union) {
+            s.bounds = bounds;
+        }
+        s.texture = render_strokes(&restyled, s.bounds, self.target_scale().get());
+        s.strokes = restyled;
         drop(sel);
         self.queue_draw();
         self.emit_by_name::<()>("changed", &[]);
@@ -798,14 +815,18 @@ impl Canvas {
         self.emit_by_name::<()>("changed", &[]);
     }
 
-    /// The selection's colour (its first stroke's) and whether it is all highlights (strokes
-    /// under or over the ink).
-    pub fn selection_style(&self) -> Option<(Rgba8, bool)> {
+    /// The selection's style, from its first stroke, and whether it is all highlights
+    /// (strokes under or over the ink).
+    pub fn selection_style(&self) -> Option<SelectionStyle> {
         let sel = self.imp().selection.borrow();
         let s = sel.as_ref()?;
         let first = s.strokes.first()?;
-        let highlighter = s.strokes.iter().all(|st| st.style().layer != InkLayer::Ink);
-        Some((first.color(), highlighter))
+        Some(SelectionStyle {
+            color: first.color(),
+            width: first.width(),
+            roundness: first.style().roundness(),
+            highlights: s.strokes.iter().all(|st| st.style().layer != InkLayer::Ink),
+        })
     }
 
     pub fn copy_selection(&self) -> bool {

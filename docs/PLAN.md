@@ -234,6 +234,8 @@ lines follow in M9.
 - [x] Tools page in Preferences: list, favourite, secondary action (a drop-down), edit,
       duplicate, delete, add, restore defaults
 - [x] The stylus's eraser end and barrel use the secondary preset (or the lasso)
+- [x] Change style in the context menu: apply a preset to the selection; colour, width
+      (proportional), tip and, for highlights, opacity
 
 Highlighters always draw over the ink, and the default one has a square tip (the "draw over
 ink" option of the first build is gone; settings it wrote still load). With pressure off, a
@@ -243,7 +245,8 @@ the pen with pressure off drew at 0.6 pressure, about 70 % of its width). P, H a
 **Test on the tablet:** the eraser end and barrel still erase (and mid-stroke, the barrel);
 pick a highlighter or the lasso as the secondary action in Preferences → Tools and try both;
 write over ink with the highlighter (over the ink, square tip by default); star and unstar
-presets, check the tool bar order and the 1–9 keys; turn pressure off for the pen; open notes
+presets, check the tool bar order and the 1–9 keys; select ink and highlights and try
+Change style (a preset, the width and tip sliders, undo); turn pressure off for the pen; open notes
 written before this version and check they look the same.
 
 ## Later
