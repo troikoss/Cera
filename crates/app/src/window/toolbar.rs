@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The floating tool bar (DESIGN.md §9): tools, colour swatches, size slots, undo and redo
-//! (the lasso's actions are in the canvas's context menu, `show_context_menu`). Which window
-//! edge it sits on and how many swatches and size slots it shows are preferences; the
-//! eraser has size slots but no swatches, the lasso neither (Change style in the context
-//! menu recolours a selection). Tapping the active pen again opens its pressure
-//! setting, the active lasso its shape (free loop or rectangle); tapping the selected swatch
+//! The floating tool bar (DESIGN.md §9): the favourite presets and the lasso, colour swatches,
+//! size slots, undo and redo (the lasso's actions are in the canvas's context menu,
+//! `show_context_menu`). Which window edge it sits on and how many swatches and size slots it
+//! shows are preferences; an eraser preset has size slots but no swatches, the lasso neither
+//! (Change style in the context menu recolours a selection). Tapping the active preset again
+//! opens its options (`presets.rs`), the active lasso its shape; tapping the selected swatch
 //! again opens the palette and colour wheel for that slot, the selected size slot a slider.
-//! Tool settings and slots are saved in the app settings.
+//! Presets, their slots and the current colour and width are saved in the app settings.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -17,15 +17,13 @@ use cera_core::Rgba8;
 use gtk::{gdk, gio, glib};
 
 use super::{CeraWindow, rgba};
-use crate::canvas::{
-    ERASER_WIDTH_RANGE, HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, HIGHLIGHTER_WIDTH_RANGE,
-    InputSource, PEN_WIDTH_RANGE, ToolKind,
-};
+use crate::canvas::{InputSource, ToolKind};
+use crate::preset::{HIGHLIGHTER_COLORS, Preset, PresetId, Role};
 use crate::settings::{self, SelectShape, ToolbarPosition};
 use crate::swatch::Swatch;
 use crate::wheel::ColorWheel;
 
-/// Palette choices: GNOME's palette for the pen, translucent tints for the highlighter.
+/// Palette choices: GNOME's palette for ink, tints for highlighters.
 const PEN_PRESETS: [Rgba8; 12] = [
     Rgba8::new(30, 30, 30, 255),
     Rgba8::new(94, 92, 100, 255),
@@ -42,30 +40,33 @@ const PEN_PRESETS: [Rgba8; 12] = [
 ];
 /// Smallest and largest dot of a size slot, logical px.
 const DOT_RANGE: (f32, f32) = (5.0, 22.0);
+/// The colour dot on a preset's tool button.
+const TOOL_DOT: i32 = 8;
 
 impl CeraWindow {
     pub(super) fn setup_toolbar(&self) {
         let imp = self.imp();
         let tools = &imp.tool_state;
-        settings::with(|s| {
-            tools.pen_color.set(s.pen_colors[0]);
-            tools.highlighter_color.set(s.highlighter_colors[0]);
-            tools.pen_width.set(s.pen_width);
-            tools.highlighter_width.set(s.highlighter_width);
-            tools.pressure.set(s.pressure);
-            tools.select_shape.set(s.select_shape);
-        });
-        self.update_lasso_icon();
+        let (active, shape) = settings::with(|s| (s.active, s.select_shape));
+        tools.tool.set(ToolKind::Preset(active));
+        tools.select_shape.set(shape);
         imp.tools.connect_active_name_notify(glib::clone!(
             #[weak(rename_to = win)]
             self,
             move |group| {
-                let tool = group
-                    .active_name()
-                    .as_deref()
-                    .and_then(ToolKind::from_name)
-                    .unwrap_or(ToolKind::Pen);
-                win.imp().tool_state.tool.set(tool);
+                // Rebuilding the group passes through no active toggle.
+                let Some(tool) = group.active_name().as_deref().and_then(ToolKind::from_name)
+                else {
+                    return;
+                };
+                let imp = win.imp();
+                if imp.rebuilding_tools.get() {
+                    return;
+                }
+                imp.tool_state.tool.set(tool);
+                if let ToolKind::Preset(id) = tool {
+                    settings::update(|s| s.active = id);
+                }
                 if tool != ToolKind::Lasso
                     && let Some(canvas) = win.canvas()
                 {
@@ -104,8 +105,71 @@ impl CeraWindow {
             }
         ));
         imp.tools.add_controller(reclick);
+        self.rebuild_tools();
         self.place_toolbar();
         self.rebuild_slots();
+    }
+
+    /// Fills the tool group with the favourite presets and the lasso, keeping the selected
+    /// tool if it is still there (else the first favourite).
+    pub(super) fn rebuild_tools(&self) {
+        let imp = self.imp();
+        let group = &*imp.tools;
+        imp.rebuilding_tools.set(true);
+        group.remove_all();
+        let mut dots = Vec::new();
+        let favorites: Vec<Preset> = settings::with(|s| {
+            s.favorites
+                .iter()
+                .filter_map(|id| s.preset(*id).cloned())
+                .collect()
+        });
+        for (i, preset) in favorites.iter().enumerate() {
+            let icon = gtk::Image::from_icon_name(preset.role.icon());
+            let child = gtk::Overlay::builder().child(&icon).build();
+            if !preset.role.is_eraser() {
+                let dot = Swatch::new(rgba(preset.color));
+                dot.set_size(TOOL_DOT);
+                dot.set_halign(gtk::Align::End);
+                dot.set_valign(gtk::Align::End);
+                dot.set_can_target(false);
+                child.add_overlay(&dot);
+                dots.push((preset.id, dot));
+            }
+            let tooltip = match i {
+                0..9 => format!("{} ({})", preset.name, i + 1),
+                _ => preset.name.clone(),
+            };
+            let toggle = adw::Toggle::builder()
+                .name(ToolKind::Preset(preset.id).name())
+                .child(&child)
+                .tooltip(tooltip)
+                .build();
+            group.add(toggle);
+        }
+        group.add(adw::Toggle::builder().name("lasso").build());
+        *imp.tool_dots.borrow_mut() = dots;
+        self.update_lasso_icon();
+        let tool = match imp.tool_state.tool.get() {
+            ToolKind::Preset(id) if favorites.iter().any(|p| p.id == id) => ToolKind::Preset(id),
+            ToolKind::Lasso => ToolKind::Lasso,
+            ToolKind::Preset(_) => favorites
+                .first()
+                .map_or(ToolKind::Lasso, |p| ToolKind::Preset(p.id)),
+        };
+        imp.tool_state.tool.set(tool);
+        group.set_active_name(Some(&tool.name()));
+        imp.rebuilding_tools.set(false);
+        self.update_toolbar();
+    }
+
+    /// Selects the `n`th favourite (from 0), for the 1–9 keys.
+    pub(super) fn select_favorite(&self, n: usize) {
+        if let Some(id) = settings::with(|s| s.favorites.get(n).copied()) {
+            self.imp()
+                .tools
+                .set_active_name(Some(&ToolKind::Preset(id).name()));
+        }
     }
 
     /// Puts the tool bar on the window edge the preferences ask for, laid out along it.
@@ -172,10 +236,10 @@ impl CeraWindow {
                 #[weak(rename_to = win)]
                 self,
                 move |b| {
-                    let tools = &win.imp().tool_state;
-                    if b.is_active() {
-                        tools.set_color(win.palette()[slot]);
-                        win.update_size_dots();
+                    if b.is_active()
+                        && let Some(color) = win.palette().get(slot).copied()
+                    {
+                        win.set_color(color);
                     }
                 }
             ));
@@ -198,8 +262,10 @@ impl CeraWindow {
                 #[weak(rename_to = win)]
                 self,
                 move |b| {
-                    if b.is_active() {
-                        win.set_width(win.widths()[slot]);
+                    if b.is_active()
+                        && let Some(width) = win.widths().get(slot).copied()
+                    {
+                        win.set_width(width);
                     }
                 }
             ));
@@ -234,110 +300,123 @@ impl CeraWindow {
         (button, dot)
     }
 
-    /// The swatches' colours: the highlighter's for the highlighter, the pen's otherwise.
-    pub(super) fn palette(&self) -> Vec<Rgba8> {
-        settings::with(|s| match self.imp().tool_state.tool.get() {
-            ToolKind::Highlighter => s.highlighter_colors[..s.color_slots].to_vec(),
-            _ => s.pen_colors[..s.color_slots].to_vec(),
-        })
+    /// The selected preset's id, unless the lasso is selected.
+    fn active_preset(&self) -> Option<PresetId> {
+        self.imp().tool_state.tool.get().preset()
     }
 
-    /// The size slots' widths for the current tool, the pen's for the lasso.
+    /// The selected preset's shown swatch colours (none for the lasso).
+    pub(super) fn palette(&self) -> Vec<Rgba8> {
+        let Some(preset) = self.imp().tool_state.preset() else {
+            return Vec::new();
+        };
+        let n = settings::with(|s| s.color_slots);
+        preset.colors[..n].to_vec()
+    }
+
+    /// The selected preset's shown size slots (none for the lasso).
     fn widths(&self) -> Vec<f32> {
-        settings::with(|s| match self.imp().tool_state.tool.get() {
-            ToolKind::Highlighter => s.highlighter_widths[..s.size_slots].to_vec(),
-            ToolKind::Eraser => s.eraser_widths[..s.size_slots].to_vec(),
-            _ => s.pen_widths[..s.size_slots].to_vec(),
-        })
+        let Some(preset) = self.imp().tool_state.preset() else {
+            return Vec::new();
+        };
+        let n = settings::with(|s| s.size_slots);
+        preset.widths[..n].to_vec()
     }
 
     fn set_width(&self, width: f32) {
-        let tools = &self.imp().tool_state;
-        let tool = tools.tool.get();
-        tools.set_width(width);
-        settings::update(|s| match tool {
-            ToolKind::Highlighter => s.highlighter_width = width,
-            ToolKind::Pen => s.pen_width = width,
-            ToolKind::Eraser => s.eraser_width = width,
-            ToolKind::Lasso => {}
+        let Some(id) = self.active_preset() else {
+            return;
+        };
+        settings::update(|s| {
+            if let Some(p) = s.preset_mut(id) {
+                p.width = width;
+            }
         });
     }
 
-    /// Swatch colours, size dots and their states, and the lasso's buttons, for the current
-    /// tool.
+    fn set_color(&self, color: Rgba8) {
+        let Some(id) = self.active_preset() else {
+            return;
+        };
+        settings::update(|s| {
+            if let Some(p) = s.preset_mut(id) {
+                p.color = color;
+            }
+        });
+        self.update_size_dots();
+        self.update_tool_dots();
+    }
+
+    /// Swatch colours, size dots and their states for the current tool.
     pub(super) fn update_toolbar(&self) {
         let imp = self.imp();
-        let tool = imp.tool_state.tool.get();
-        let palette = self.palette();
-        let current = imp.tool_state.color();
-        let coloured = matches!(tool, ToolKind::Pen | ToolKind::Highlighter);
+        let preset = imp.tool_state.preset();
+        let role = preset.as_ref().map(|p| p.role);
+        let coloured = role.is_some_and(|r| !r.is_eraser());
         imp.swatch_box.set_visible(coloured);
         // The lasso has neither swatches nor sizes: one separator is enough.
-        imp.swatch_separator.set_visible(tool != ToolKind::Lasso);
+        imp.swatch_separator.set_visible(preset.is_some());
+        let palette = self.palette();
         for (i, (button, swatch)) in imp.swatches.borrow().iter().enumerate() {
-            swatch.set_color(rgba(palette[i]));
+            let Some(&color) = palette.get(i) else { break };
+            swatch.set_color(rgba(color));
             button.set_tooltip_text(Some("Colour (tap again for more)"));
-            button.set_active(palette[i] == current);
+            button.set_active(preset.as_ref().is_some_and(|p| p.color == color));
         }
-        let sized = tool != ToolKind::Lasso;
         // Without swatches the separator before them already divides the sizes off.
-        imp.size_separator
-            .set_visible(matches!(tool, ToolKind::Pen | ToolKind::Highlighter));
-        imp.size_box.set_visible(sized);
+        imp.size_separator.set_visible(coloured);
+        imp.size_box.set_visible(preset.is_some());
+        let (Some(preset), Some(role)) = (preset, role) else {
+            return;
+        };
         let widths = self.widths();
-        let width = imp.tool_state.width();
-        let unit = if tool == ToolKind::Eraser { "px" } else { "pt" };
+        let unit = if role.is_eraser() { "px" } else { "pt" };
         for (i, (button, dot)) in imp.sizes.borrow().iter().enumerate() {
-            dot.set_color(dot_color(tool, current));
-            dot.set_size(dot_size(tool, widths[i]));
+            let Some(&width) = widths.get(i) else { break };
+            dot.set_color(dot_color(role, preset.color));
+            dot.set_size(dot_size(role, width));
             button.set_tooltip_text(Some(&format!(
                 "{} {unit} (tap again to change)",
-                fmt_pt(widths[i])
+                fmt_pt(width)
             )));
-            button.set_active((widths[i] - width).abs() < 1e-3);
+            button.set_active((width - preset.width).abs() < 1e-3);
         }
     }
 
     /// The size slots' dots take the current colour.
     fn update_size_dots(&self) {
-        let tools = &self.imp().tool_state;
-        let color = dot_color(tools.tool.get(), tools.color());
+        let Some(preset) = self.imp().tool_state.preset() else {
+            return;
+        };
+        let color = dot_color(preset.role, preset.color);
         for (_, dot) in self.imp().sizes.borrow().iter() {
             dot.set_color(color);
         }
     }
 
-    /// Pressure for the pen, the shape for the lasso.
-    fn show_tool_popover(&self) {
-        let imp = self.imp();
-        let tools = imp.tool_state.clone();
-        match tools.tool.get() {
-            ToolKind::Pen => {}
-            ToolKind::Lasso => return self.show_select_shape(),
-            _ => return,
+    /// The tool buttons' dots take their presets' current colours.
+    fn update_tool_dots(&self) {
+        for (id, dot) in self.imp().tool_dots.borrow().iter() {
+            if let Some(color) = settings::with(|s| s.preset(*id).map(|p| p.color)) {
+                dot.set_color(rgba(color));
+            }
         }
-        let label = gtk::Label::builder()
-            .label("Pressure")
-            .xalign(0.0)
-            .hexpand(true)
-            .build();
-        let switch = gtk::Switch::builder()
-            .active(tools.pressure.get())
-            .valign(gtk::Align::Center)
-            .build();
-        switch.connect_active_notify(move |s| {
-            tools.pressure.set(s.is_active());
-            settings::update(|st| st.pressure = s.is_active());
-        });
-        let content = popover_box(gtk::Orientation::Horizontal);
-        content.append(&label);
-        content.append(&switch);
-        self.tool_popup(&content);
+    }
+
+    /// The preset's options, or the shape for the lasso.
+    fn show_tool_popover(&self) {
+        match self.imp().tool_state.tool.get() {
+            ToolKind::Lasso => self.show_select_shape(),
+            ToolKind::Preset(id) => {
+                let content = self.preset_popover(id);
+                self.tool_popup(&content);
+            }
+        }
     }
 
     /// A popover pointing at the tapped tool. It hangs off the tool bar: AdwToggleGroup
     /// hides children it doesn't know about when focus moves into them.
-    fn tool_popup(&self, content: &impl IsA<gtk::Widget>) {
+    fn tool_popup(&self, content: &impl IsA<gtk::Widget>) -> gtk::Popover {
         let imp = self.imp();
         let popover = popup(content, &*imp.toolbar);
         // The group's own button under the tap, else the whole group.
@@ -358,6 +437,7 @@ impl CeraWindow {
                 b.height() as i32,
             )));
         }
+        popover
     }
 
     /// Free loop, rectangle, stroke or add space.
@@ -413,65 +493,49 @@ impl CeraWindow {
 
     /// A slider for the width of size slot `slot`; moving it selects the slot.
     fn show_width(&self, slot: usize, anchor: &gtk::ToggleButton) {
-        let tool = self.imp().tool_state.tool.get();
-        let (min, max) = match tool {
-            ToolKind::Pen => PEN_WIDTH_RANGE,
-            ToolKind::Highlighter => HIGHLIGHTER_WIDTH_RANGE,
-            ToolKind::Eraser => ERASER_WIDTH_RANGE,
-            ToolKind::Lasso => return,
+        let Some(preset) = self.imp().tool_state.preset() else {
+            return;
         };
-        let step = if tool == ToolKind::Pen { 0.1 } else { 1.0 };
+        let (id, role) = (preset.id, preset.role);
+        let (min, max) = role.width_range();
+        let fine = role == Role::Ink;
+        let step = if fine { 0.1 } else { 1.0 };
         let scale = gtk::Scale::with_range(
             gtk::Orientation::Horizontal,
             f64::from(min),
             f64::from(max),
             step,
         );
-        scale.set_value(f64::from(self.widths()[slot]));
-        scale.set_digits(if tool == ToolKind::Pen { 1 } else { 0 });
+        scale.set_value(f64::from(preset.widths[slot]));
+        scale.set_digits(if fine { 1 } else { 0 });
         scale.set_draw_value(true);
         scale.set_value_pos(gtk::PositionType::Right);
         scale.set_width_request(240);
         scale.set_hexpand(true);
         let content = popover_box(gtk::Orientation::Horizontal);
-        content.append(&gtk::Label::new(Some(if tool == ToolKind::Eraser {
+        content.append(&gtk::Label::new(Some(if role.is_eraser() {
             "Size"
         } else {
             "Width"
         })));
         content.append(&scale);
-        let popover = popup(&content, anchor);
+        popup(&content, anchor);
         anchor.set_active(true);
-        // The settings file is written once, when the popover closes.
-        let width = Rc::new(Cell::new(None::<f32>));
+        // The settings file is written once the slider rests.
         scale.connect_value_changed(glib::clone!(
             #[weak(rename_to = win)]
             self,
-            #[strong]
-            width,
             move |s| {
                 let w = s.value() as f32;
-                width.set(Some(w));
-                let imp = win.imp();
-                imp.tool_state.set_width(w);
-                if let Some((_, dot)) = imp.sizes.borrow().get(slot) {
-                    dot.set_size(dot_size(tool, w));
-                }
-            }
-        ));
-        popover.connect_closed(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |_| {
-                let Some(w) = width.take() else { return };
-                settings::update(|s| match tool {
-                    ToolKind::Highlighter => s.highlighter_widths[slot] = w,
-                    ToolKind::Eraser => s.eraser_widths[slot] = w,
-                    _ => s.pen_widths[slot] = w,
+                settings::change(|st| {
+                    if let Some(p) = st.preset_mut(id) {
+                        p.widths[slot] = w;
+                        p.width = w;
+                    }
                 });
-                if win.imp().tool_state.tool.get() == tool {
-                    win.set_width(w);
-                    win.update_toolbar();
+                let imp = win.imp();
+                if let Some((_, dot)) = imp.sizes.borrow().get(slot) {
+                    dot.set_size(dot_size(role, w));
                 }
             }
         ));
@@ -479,8 +543,10 @@ impl CeraWindow {
 
     /// More colours for swatch `slot`, and a colour wheel.
     fn show_palette(&self, slot: usize, anchor: &gtk::ToggleButton) {
-        let highlighter = self.imp().tool_state.tool.get() == ToolKind::Highlighter;
-        let presets: &[Rgba8] = if highlighter {
+        let Some(preset) = self.imp().tool_state.preset() else {
+            return;
+        };
+        let presets: &[Rgba8] = if matches!(preset.role, Role::Highlighter { .. }) {
             &HIGHLIGHTER_COLORS
         } else {
             &PEN_PRESETS
@@ -493,9 +559,10 @@ impl CeraWindow {
             .build();
         let content = popover_box(gtk::Orientation::Vertical);
         content.append(&wrap);
-        let wheel = ColorWheel::new(self.palette()[slot]);
+        let wheel = ColorWheel::new(preset.colors[slot]);
         content.append(&wheel);
         let popover = popup(&content, anchor);
+        let id = preset.id;
         for &color in presets {
             let button = gtk::Button::builder()
                 .child(&Swatch::new(rgba(color)))
@@ -509,13 +576,12 @@ impl CeraWindow {
                 #[weak]
                 popover,
                 move |_| {
-                    win.set_palette_slot(slot, color, highlighter);
+                    win.set_palette_slot(id, slot, color);
                     popover.popdown();
                 }
             ));
             wrap.append(&button);
         }
-        let alpha = if highlighter { HIGHLIGHTER_ALPHA } else { 255 };
         // While dragging only the swatch follows; the colour is taken when the finger lifts.
         wheel.connect_changed(glib::clone!(
             #[weak(rename_to = win)]
@@ -531,24 +597,23 @@ impl CeraWindow {
             self,
             move |w| {
                 let color = Rgba8 {
-                    a: alpha,
+                    a: 255,
                     ..w.color()
                 };
-                win.set_palette_slot(slot, color, highlighter);
+                win.set_palette_slot(id, slot, color);
             }
         ));
     }
 
-    fn set_palette_slot(&self, slot: usize, color: Rgba8, highlighter: bool) {
+    fn set_palette_slot(&self, id: PresetId, slot: usize, color: Rgba8) {
         settings::update(|s| {
-            if highlighter {
-                s.highlighter_colors[slot] = color;
-            } else {
-                s.pen_colors[slot] = color;
+            if let Some(p) = s.preset_mut(id) {
+                p.colors[slot] = color;
+                p.color = color;
             }
         });
-        self.imp().tool_state.set_color(color);
         self.update_toolbar();
+        self.update_tool_dots();
     }
 }
 
@@ -797,22 +862,18 @@ fn on_retap(button: &gtk::ToggleButton, f: impl Fn(&gtk::ToggleButton) + 'static
     button.add_controller(tap);
 }
 
-/// Size dots show the tool's colour; the eraser's are grey.
-fn dot_color(tool: ToolKind, current: Rgba8) -> gdk::RGBA {
-    if tool == ToolKind::Eraser {
+/// Size dots show the preset's colour; an eraser's are grey.
+fn dot_color(role: Role, current: Rgba8) -> gdk::RGBA {
+    if role.is_eraser() {
         gdk::RGBA::new(0.55, 0.55, 0.55, 1.0)
     } else {
         rgba(current)
     }
 }
 
-/// A size slot's dot: on a log scale over the tool's range, so fine widths stay apart.
-fn dot_size(tool: ToolKind, width: f32) -> i32 {
-    let (min, max) = match tool {
-        ToolKind::Highlighter => HIGHLIGHTER_WIDTH_RANGE,
-        ToolKind::Eraser => ERASER_WIDTH_RANGE,
-        _ => PEN_WIDTH_RANGE,
-    };
+/// A size slot's dot: on a log scale over the role's range, so fine widths stay apart.
+fn dot_size(role: Role, width: f32) -> i32 {
+    let (min, max) = role.width_range();
     let t = ((width / min).ln() / (max / min).ln()).clamp(0.0, 1.0);
     (DOT_RANGE.0 + t * (DOT_RANGE.1 - DOT_RANGE.0)).round() as i32
 }
@@ -823,7 +884,7 @@ fn fmt_pt(width: f32) -> String {
     s.strip_suffix(".0").map_or(s.clone(), str::to_owned)
 }
 
-fn popover_box(orientation: gtk::Orientation) -> gtk::Box {
+pub(super) fn popover_box(orientation: gtk::Orientation) -> gtk::Box {
     gtk::Box::builder()
         .orientation(orientation)
         .spacing(12)
@@ -834,9 +895,12 @@ fn popover_box(orientation: gtk::Orientation) -> gtk::Box {
         .build()
 }
 
-/// A popover above `anchor`, removed once closed.
-/// A popover from the tool bar, opening away from the window edge the bar sits on.
-fn popup(content: &impl IsA<gtk::Widget>, anchor: &impl IsA<gtk::Widget>) -> gtk::Popover {
+/// A popover from the tool bar, opening away from the window edge the bar sits on; removed
+/// once closed.
+pub(super) fn popup(
+    content: &impl IsA<gtk::Widget>,
+    anchor: &impl IsA<gtk::Widget>,
+) -> gtk::Popover {
     let side = match settings::with(|s| s.toolbar_position) {
         ToolbarPosition::Bottom => gtk::PositionType::Top,
         ToolbarPosition::Top => gtk::PositionType::Bottom,
@@ -880,7 +944,7 @@ mod tests {
 
     #[test]
     fn dots_grow_with_width() {
-        let pen = [0.2, 0.8, 1.6, 3.2, 10.0].map(|w| dot_size(ToolKind::Pen, w));
+        let pen = [0.2, 0.8, 1.6, 3.2, 10.0].map(|w| dot_size(Role::Ink, w));
         assert!(pen.windows(2).all(|p| p[0] < p[1]), "{pen:?}");
         assert_eq!(pen[0], DOT_RANGE.0 as i32);
         assert_eq!(pen[4], DOT_RANGE.1 as i32);

@@ -333,7 +333,7 @@ impl Canvas {
         self.prune_ghosts(&cache, doc.id, &on_screen);
 
         if let Some((x, y)) = imp.eraser_cursor.get() {
-            let r = self.tools().eraser_width.get();
+            let r = imp.eraser_radius.get();
             let bounds = graphene::Rect::new(x as f32 - r, y as f32 - r, 2.0 * r, 2.0 * r);
             let ring = gsk::RoundedRect::from_rect(bounds, r);
             let grey = gdk::RGBA::new(0.3, 0.3, 0.3, 0.8);

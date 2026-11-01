@@ -31,11 +31,7 @@ use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use self::cache::TileCache;
-pub use self::input::{
-    ERASER_WIDTH_RANGE, ERASER_WIDTHS, HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS,
-    HIGHLIGHTER_WIDTH_RANGE, HIGHLIGHTER_WIDTHS, MAX_COLOR_SLOTS, MAX_SIZE_SLOTS, PEN_COLORS,
-    PEN_WIDTH_RANGE, PEN_WIDTHS, ToolKind, Tools,
-};
+pub use self::input::{ToolKind, Tools};
 pub use self::lasso::{HOLD_SLOP_PX, HOLD_TIME, InputSource, has_clipboard};
 use self::layout::{Layout, View};
 use self::wet::WetStroke;
@@ -135,6 +131,10 @@ mod imp {
         pub(super) press: Cell<(f64, f64)>,
         pub(super) ghosts: RefCell<Vec<lasso::Ghost>>,
         pub(super) erasing: Cell<bool>,
+        /// The eraser's radius in logical pixels while `erasing`.
+        pub(super) eraser_radius: Cell<f32>,
+        /// This contact uses the secondary action (eraser end or barrel button).
+        pub(super) on_secondary: Cell<bool>,
         /// The stroke this pen contact drew; a barrel press mid-stroke erases around it.
         pub(super) drawn: RefCell<Option<std::sync::Arc<cera_core::Stroke>>>,
         pub(super) eraser_cursor: Cell<Option<(f64, f64)>>,
@@ -178,6 +178,8 @@ mod imp {
                 press: Cell::default(),
                 ghosts: RefCell::default(),
                 erasing: Cell::new(false),
+                eraser_radius: Cell::new(0.0),
+                on_secondary: Cell::new(false),
                 drawn: RefCell::default(),
                 eraser_cursor: Cell::new(None),
                 new_page_spec: RefCell::default(),

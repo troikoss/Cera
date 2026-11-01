@@ -29,8 +29,12 @@ on each thumbnail; select all, invert, before, after); checked with mouse input 
 Broadway backend on the desktop. A selected page's context menu acts on all selected pages
 (paper, move, bookmark, delete, each one undo step); checked with injected pointer input in
 the headless compositor.
-M8 (tool presets) in progress: stroke styles, ink encoding 2 and the renderer are done; the
-presets themselves (settings, tool bar, popover, preferences) are next.
+M8 (tool presets) implemented: stroke styles (layer, tip roundness) in ink encoding 2, presets
+in the settings (version 2, migrated from the per-tool fields), the tool bar built from
+favourite presets, the preset popover, a Tools page in Preferences and the secondary preset
+for the stylus. Checked with injected pointer and keys in the headless compositor (popover,
+square highlighter over ink, add, rename, kind, unstar, delete, restore, 1–9 keys, eraser);
+the stylus's secondary action is yours to test on the tablet.
 
 ## M0 — Skeleton
 
@@ -223,13 +227,22 @@ lines follow in M9.
       one fill); hit-testing and stroke bounds reach the nib's corners; wet ink matches
 - [x] Benchmarked (tablet): square nib 122 µs per 200-sample stroke, rounded 467 µs, round
       348 µs; old notes render pixel-identical (`cera-cli png` before and after)
-- [ ] Presets in the settings (settings version 2, migration from the per-tool fields)
-- [ ] Tool bar built from the favourite presets plus the lasso; 1–9 pick favourites, L the lasso
-- [ ] Preset popover on a tap of the active preset (every option, swatches, sizes, "Manage
-      presets…")
-- [ ] Tools page in Preferences: list, favourite, secondary action, edit, duplicate, delete,
-      add, restore defaults
-- [ ] The stylus's eraser end and barrel use the secondary preset (or the lasso)
+- [x] Presets in the settings (settings version 2, migration from the per-tool fields)
+- [x] Tool bar built from the favourite presets plus the lasso; 1–9 pick favourites, L the lasso
+- [x] Preset popover on a tap of the active preset (name, kind, draw over ink, pressure,
+      opacity, tip; "Manage presets…"). Swatches and sizes stay in the tool bar only
+- [x] Tools page in Preferences: list, favourite, secondary action (a drop-down), edit,
+      duplicate, delete, add, restore defaults
+- [x] The stylus's eraser end and barrel use the secondary preset (or the lasso)
+
+With pressure off, a stroke is stored at full pressure, so it is exactly its width (before,
+the pen with pressure off drew at 0.6 pressure, about 70 % of its width). P, H and E are gone.
+
+**Test on the tablet:** the eraser end and barrel still erase (and mid-stroke, the barrel);
+pick a highlighter or the lasso as the secondary action in Preferences → Tools and try both;
+make a square highlighter that draws over ink and write under and over it; star and unstar
+presets, check the tool bar order and the 1–9 keys; turn pressure off for the pen; open notes
+written before this version and check they look the same.
 
 ## Later
 

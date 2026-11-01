@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Drawing input (DESIGN.md §6). The stylus draws with the selected tool; its eraser end and
-//! barrel button erase. The mouse draws at a fixed pressure and pans with the middle button.
-//! Touch is left to the scrolled window (pan) and the pinch gesture.
+//! barrel button use the secondary preset (the eraser by default) or the lasso. The mouse
+//! draws at a fixed pressure and pans with the middle button. Touch is left to the scrolled
+//! window (pan) and the pinch gesture.
 //!
 //! On pen-up the samples are simplified into a `Stroke` and added through the note's
 //! `History`; an eraser drag removes whole strokes and undoes as one step.
@@ -9,7 +10,7 @@
 use std::cell::Cell;
 use std::sync::Arc;
 
-use cera_core::{Point, Rect, Rgba8, Stroke, StrokeStyle, simplify};
+use cera_core::{Point, Rect, Stroke, simplify};
 use cera_render::ink;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
@@ -18,89 +19,63 @@ use gtk::{gdk, glib};
 use super::Canvas;
 use super::wet::{Pen, WetStroke};
 use crate::note::SharedNote;
-use crate::settings::SelectShape;
+use crate::preset::{Preset, PresetId, Secondary};
+use crate::settings::{self, SelectShape};
 
-/// Most colour swatches and size slots the tool bar shows (a preference, 3 by default).
-pub const MAX_COLOR_SLOTS: usize = 6;
-pub const MAX_SIZE_SLOTS: usize = 5;
-/// Default full-pressure widths of the size slots, in points; the first three are shown.
-pub const PEN_WIDTHS: [f32; MAX_SIZE_SLOTS] = [0.8, 1.6, 3.2, 5.0, 8.0];
-pub const HIGHLIGHTER_WIDTHS: [f32; MAX_SIZE_SLOTS] = [8.0, 12.0, 20.0, 28.0, 36.0];
-/// Default eraser radii of the size slots, in logical pixels (the eraser works on screen,
-/// whatever the zoom).
-pub const ERASER_WIDTHS: [f32; MAX_SIZE_SLOTS] = [5.0, 10.0, 20.0, 32.0, 48.0];
-/// What a size slot can be set to: points for the pen and highlighter, logical pixels of
-/// radius for the eraser.
-pub const PEN_WIDTH_RANGE: (f32, f32) = (0.2, 10.0);
-pub const HIGHLIGHTER_WIDTH_RANGE: (f32, f32) = (2.0, 40.0);
-pub const ERASER_WIDTH_RANGE: (f32, f32) = (3.0, 60.0);
-/// Pressure for devices without one (the mouse), and for the pen with pressure turned off.
+/// Pressure for devices without one (the mouse and fingers).
 const MOUSE_PRESSURE: f64 = 0.6;
 /// Stroke simplification on pen-up: position (points) and pressure tolerances.
 const SIMPLIFY_EPS: f32 = 0.05;
 const SIMPLIFY_PRESSURE_EPS: f32 = 0.03;
 
-/// Default swatch colours; highlighters are translucent.
-pub const PEN_COLORS: [Rgba8; MAX_COLOR_SLOTS] = [
-    Rgba8::new(30, 30, 30, 255),
-    Rgba8::new(28, 113, 216, 255),
-    Rgba8::new(192, 28, 40, 255),
-    Rgba8::new(38, 162, 105, 255),
-    Rgba8::new(230, 97, 0, 255),
-    Rgba8::new(129, 61, 156, 255),
-];
-pub const HIGHLIGHTER_ALPHA: u8 = 90;
-pub const HIGHLIGHTER_COLORS: [Rgba8; MAX_COLOR_SLOTS] = [
-    Rgba8::new(246, 211, 45, HIGHLIGHTER_ALPHA),
-    Rgba8::new(87, 227, 137, HIGHLIGHTER_ALPHA),
-    Rgba8::new(246, 97, 81, HIGHLIGHTER_ALPHA),
-    Rgba8::new(98, 160, 234, HIGHLIGHTER_ALPHA),
-    Rgba8::new(220, 138, 221, HIGHLIGHTER_ALPHA),
-    Rgba8::new(255, 163, 72, HIGHLIGHTER_ALPHA),
-];
-
+/// A tool bar tool: a preset, or the lasso.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
-    Pen,
-    Highlighter,
-    Eraser,
+    Preset(PresetId),
     Lasso,
 }
 
 impl ToolKind {
-    pub fn name(self) -> &'static str {
+    /// The tool bar toggle's name.
+    pub fn name(self) -> String {
         match self {
-            ToolKind::Pen => "pen",
-            ToolKind::Highlighter => "highlighter",
-            ToolKind::Eraser => "eraser",
-            ToolKind::Lasso => "lasso",
+            ToolKind::Preset(id) => format!("preset-{id}"),
+            ToolKind::Lasso => "lasso".to_owned(),
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        [
-            ToolKind::Pen,
-            ToolKind::Highlighter,
-            ToolKind::Eraser,
-            ToolKind::Lasso,
-        ]
-        .into_iter()
-        .find(|t| t.name() == name)
+        if name == "lasso" {
+            return Some(ToolKind::Lasso);
+        }
+        name.strip_prefix("preset-")?
+            .parse()
+            .ok()
+            .map(ToolKind::Preset)
+    }
+
+    pub fn preset(self) -> Option<PresetId> {
+        match self {
+            ToolKind::Preset(id) => Some(id),
+            ToolKind::Lasso => None,
+        }
     }
 }
 
-/// The selected tool and its settings, shared by every canvas in a window.
+impl From<Secondary> for ToolKind {
+    fn from(s: Secondary) -> Self {
+        match s {
+            Secondary::Preset(id) => ToolKind::Preset(id),
+            Secondary::Lasso => ToolKind::Lasso,
+        }
+    }
+}
+
+/// The selected tool, shared by every canvas in a window. The presets themselves are in the
+/// settings.
 #[derive(Debug)]
 pub struct Tools {
     pub tool: Cell<ToolKind>,
-    pub pen_color: Cell<Rgba8>,
-    pub highlighter_color: Cell<Rgba8>,
-    pub pen_width: Cell<f32>,
-    pub highlighter_width: Cell<f32>,
-    /// Eraser radius in logical pixels; also used by the stylus's eraser end and barrel.
-    pub eraser_width: Cell<f32>,
-    /// The pen's width follows the stylus pressure.
-    pub pressure: Cell<bool>,
     /// What the lasso draws to select.
     pub select_shape: Cell<SelectShape>,
 }
@@ -108,51 +83,17 @@ pub struct Tools {
 impl Default for Tools {
     fn default() -> Self {
         Self {
-            tool: Cell::new(ToolKind::Pen),
-            pen_color: Cell::new(PEN_COLORS[0]),
-            highlighter_color: Cell::new(HIGHLIGHTER_COLORS[0]),
-            pen_width: Cell::new(PEN_WIDTHS[1]),
-            highlighter_width: Cell::new(HIGHLIGHTER_WIDTHS[1]),
-            eraser_width: Cell::new(ERASER_WIDTHS[1]),
-            pressure: Cell::new(true),
+            tool: Cell::new(ToolKind::Preset(0)),
             select_shape: Cell::new(SelectShape::Lasso),
         }
     }
 }
 
 impl Tools {
-    /// The colour of the pen or highlighter, whichever is selected (the pen's otherwise).
-    pub fn color(&self) -> Rgba8 {
-        match self.tool.get() {
-            ToolKind::Highlighter => self.highlighter_color.get(),
-            _ => self.pen_color.get(),
-        }
-    }
-
-    pub fn set_color(&self, color: Rgba8) {
-        match self.tool.get() {
-            ToolKind::Highlighter => self.highlighter_color.set(color),
-            ToolKind::Pen => self.pen_color.set(color),
-            ToolKind::Eraser | ToolKind::Lasso => {}
-        }
-    }
-
-    /// Width of the selected tool (the pen's for the lasso).
-    pub fn width(&self) -> f32 {
-        match self.tool.get() {
-            ToolKind::Highlighter => self.highlighter_width.get(),
-            ToolKind::Eraser => self.eraser_width.get(),
-            _ => self.pen_width.get(),
-        }
-    }
-
-    pub fn set_width(&self, width: f32) {
-        match self.tool.get() {
-            ToolKind::Highlighter => self.highlighter_width.set(width),
-            ToolKind::Pen => self.pen_width.set(width),
-            ToolKind::Eraser => self.eraser_width.set(width),
-            ToolKind::Lasso => {}
-        }
+    /// The selected preset, if a preset (not the lasso) is selected and still exists.
+    pub fn preset(&self) -> Option<Preset> {
+        let id = self.tool.get().preset()?;
+        settings::with(|s| s.preset(id).cloned())
     }
 }
 
@@ -200,7 +141,7 @@ impl Canvas {
                     // With the tip down the press resets the gesture, and `cancel` below has
                     // committed the ink so far, which stays; the rest of the stroke erases.
                     if tip_down && is_barrel(button) {
-                        canvas.erase_from(Sample {
+                        canvas.secondary_from(Sample {
                             x,
                             y,
                             pressure: 1.0,
@@ -220,7 +161,7 @@ impl Canvas {
                 let sample = Sample {
                     x,
                     y,
-                    pressure: canvas.pressure(g.axis(gdk::AxisUse::Pressure)),
+                    pressure: g.axis(gdk::AxisUse::Pressure).unwrap_or(1.0),
                     time,
                 };
                 canvas.begin(sample, eraser_end || barrel);
@@ -230,11 +171,7 @@ impl Canvas {
             #[weak(rename_to = canvas)]
             self,
             move |g, x, y| {
-                let mut samples = stylus_samples(g, x, y);
-                if !canvas.tools().pressure.get() {
-                    samples.iter_mut().for_each(|s| s.pressure = MOUSE_PRESSURE);
-                }
-                canvas.extend(&samples);
+                canvas.extend(&stylus_samples(g, x, y));
             }
         ));
         stylus.connect_up(glib::clone!(
@@ -316,7 +253,7 @@ impl Canvas {
                         )
                 });
                 if !mouse {
-                    // The stylus's barrel button erases instead.
+                    // The stylus's barrel button is the secondary action instead.
                     g.set_state(gtk::EventSequenceState::Denied);
                     return;
                 }
@@ -355,9 +292,12 @@ impl Canvas {
         self.add_controller(pan);
     }
 
-    fn begin(&self, s: Sample, eraser: bool) {
+    /// A press starts: with the selected tool, or the secondary action (the stylus's eraser
+    /// end or barrel button).
+    fn begin(&self, s: Sample, secondary: bool) {
         let imp = self.imp();
         imp.drawn.take();
+        imp.on_secondary.set(secondary);
         let Some(note) = imp.note.borrow().clone() else {
             return;
         };
@@ -366,13 +306,22 @@ impl Canvas {
         if imp.input_source.get() != super::InputSource::Mouse {
             self.start_hold(s.x, s.y);
         }
-        if !eraser && self.tool() == ToolKind::Lasso {
-            self.lasso_begin(s.x, s.y);
-            return;
-        }
+        let tool = if secondary {
+            settings::with(|st| st.secondary).into()
+        } else {
+            self.tool()
+        };
+        let preset = match tool {
+            ToolKind::Lasso => {
+                self.lasso_begin(s.x, s.y);
+                return;
+            }
+            ToolKind::Preset(id) => settings::with(|st| st.preset(id).cloned()),
+        };
+        let Some(preset) = preset else { return };
         self.clear_selection();
-        if eraser || self.tool() == ToolKind::Eraser {
-            self.begin_erase(&note, s);
+        if preset.role.is_eraser() {
+            self.begin_erase(&note, s, preset.width);
             return;
         }
         let Some(view) = self.view() else { return };
@@ -392,17 +341,11 @@ impl Canvas {
             tracing::warn!(page = id, "cannot read ink: {e}");
             return;
         }
-        let tools = self.tools();
-        let highlighter = tools.tool.get() == ToolKind::Highlighter;
         let pen = Pen {
-            style: if highlighter {
-                StrokeStyle::HIGHLIGHTER
-            } else {
-                StrokeStyle::PEN
-            },
-            color: tools.color(),
-            width: tools.width(),
-            constant: highlighter,
+            style: preset.stroke_style(),
+            color: preset.ink_color(),
+            width: preset.width,
+            constant: !preset.pressure,
         };
         let mut wet = WetStroke::new(id, (spec.width, spec.height), pen, self.target_scale());
         wet.extend(&[page_point(s, (x, y), origin)]);
@@ -416,24 +359,39 @@ impl Canvas {
     }
 
     /// The barrel button pressed with the tip down: the ink so far stays and the rest of the
-    /// stroke erases other strokes.
-    fn erase_from(&self, s: Sample) {
+    /// stroke uses the secondary action. An eraser leaves the ink so far alone.
+    fn secondary_from(&self, s: Sample) {
         let imp = self.imp();
-        if imp.erasing.get() {
+        if imp.on_secondary.get() {
             return;
         }
         self.end();
+        let eraser = match settings::with(|st| st.secondary) {
+            Secondary::Preset(id) => settings::with(|st| {
+                st.preset(id)
+                    .filter(|p| p.role.is_eraser())
+                    .map(|p| p.width)
+            }),
+            Secondary::Lasso => None,
+        };
+        let Some(radius) = eraser else {
+            self.begin(s, true);
+            return;
+        };
+        imp.on_secondary.set(true);
         self.clear_selection();
         let Some(note) = imp.note.borrow().clone() else {
             return;
         };
-        self.begin_erase(&note, s);
+        self.begin_erase(&note, s, radius);
     }
 
-    /// An eraser drag starts; its removals undo as one step.
-    fn begin_erase(&self, note: &SharedNote, s: Sample) {
+    /// An eraser drag starts with a radius in logical pixels; its removals undo as one step.
+    fn begin_erase(&self, note: &SharedNote, s: Sample, radius: f32) {
         note.borrow_mut().history.begin_group();
-        self.imp().erasing.set(true);
+        let imp = self.imp();
+        imp.erasing.set(true);
+        imp.eraser_radius.set(radius);
         self.erase_at(s);
     }
 
@@ -580,7 +538,7 @@ impl Canvas {
         let (Some(note), Some(view)) = (imp.note.borrow().clone(), self.view()) else {
             return;
         };
-        let radius = (f64::from(self.tools().eraser_width.get()) / view.zoom) as f32;
+        let radius = (f64::from(imp.eraser_radius.get()) / view.zoom) as f32;
         let (x, y) = view.to_pt(s.x, s.y);
         let drawn = imp.drawn.borrow();
         let pages: Vec<_> = {
@@ -651,9 +609,17 @@ impl Canvas {
             stroke(self, line(f64::from(row), 8.0), false);
         }
         let tools = self.tools();
-        let tool = tools.tool.replace(ToolKind::Highlighter);
-        stroke(self, line(1.5, 0.0), false);
-        tools.tool.set(tool);
+        let highlighter = settings::with(|s| {
+            s.presets
+                .iter()
+                .find(|p| matches!(p.role, crate::preset::Role::Highlighter { .. }))
+                .map(|p| p.id)
+        });
+        if let Some(id) = highlighter {
+            let tool = tools.tool.replace(ToolKind::Preset(id));
+            stroke(self, line(1.5, 0.0), false);
+            tools.tool.set(tool);
+        }
         tracing::info!("demo: drew 5 strokes");
         let weak = self.downgrade();
         glib::timeout_add_local_once(std::time::Duration::from_millis(1000), move || {
@@ -677,7 +643,7 @@ impl Canvas {
                 canvas.begin(barrel[0], false);
                 canvas.extend(&barrel[1..30]);
                 canvas.end();
-                canvas.erase_from(barrel[30]);
+                canvas.secondary_from(barrel[30]);
                 canvas.extend(&barrel[31..]);
                 canvas.end();
                 tracing::info!("demo: drew a line and pressed the barrel");
@@ -710,17 +676,6 @@ impl Canvas {
             }
             glib::ControlFlow::Continue
         });
-    }
-}
-
-impl Canvas {
-    /// The stylus pressure to draw with, or a fixed one when pressure is turned off.
-    fn pressure(&self, axis: Option<f64>) -> f64 {
-        if self.tools().pressure.get() {
-            axis.unwrap_or(1.0)
-        } else {
-            MOUSE_PRESSURE
-        }
     }
 }
 

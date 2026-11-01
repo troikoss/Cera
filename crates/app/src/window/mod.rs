@@ -14,6 +14,7 @@ mod export;
 mod files;
 mod pages;
 mod prefs;
+mod presets;
 mod tabs;
 mod toolbar;
 
@@ -79,6 +80,10 @@ mod imp {
         pub(super) tool_state: Rc<Tools>,
         pub(super) swatches: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
         pub(super) sizes: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
+        /// The colour dot on each favourite preset's tool button.
+        pub(super) tool_dots: RefCell<Vec<(crate::preset::PresetId, Swatch)>>,
+        /// Set while the tool group is refilled, which passes through no active toggle.
+        pub(super) rebuilding_tools: Cell<bool>,
         /// Where the tool buttons were last tapped, for pointing their popover at the tool.
         pub(super) tool_tap: Cell<(f64, f64)>,
         pub(super) renderer: OnceCell<Rc<Renderer>>,
@@ -254,6 +259,14 @@ impl CeraWindow {
                 }
             })
             .build();
+        let favorite = gio::ActionEntry::builder("favorite")
+            .parameter_type(Some(glib::VariantTy::UINT32))
+            .activate(|win: &Self, _, param| {
+                if let Some(n) = param.and_then(|p| p.get::<u32>()) {
+                    win.select_favorite(n as usize);
+                }
+            })
+            .build();
         let change_style = gio::ActionEntry::builder("change-style")
             .parameter_type(Some(glib::VariantTy::new("(ddu)").expect("valid type")))
             .activate(|win: &Self, _, param| {
@@ -323,6 +336,7 @@ impl CeraWindow {
             canvas_action("zoom-out", |c| c.zoom_step(-1)),
             canvas_action("zoom-fit", Canvas::zoom_fit_width),
             tool,
+            favorite,
             arrange,
             change_style,
         ]);
@@ -335,10 +349,17 @@ impl CeraWindow {
     fn setup_shortcuts(&self) {
         let controller = gtk::ShortcutController::new();
         controller.set_propagation_phase(gtk::PropagationPhase::Bubble);
-        let shortcuts: [(&str, &str, Option<&str>); 18] = [
-            ("p", "win.tool", Some("pen")),
-            ("h", "win.tool", Some("highlighter")),
-            ("e", "win.tool", Some("eraser")),
+        // 1–9 pick the tool bar's favourite presets.
+        for n in 0..9u32 {
+            let key = (n + 1).to_string();
+            let shortcut = gtk::Shortcut::builder()
+                .trigger(&gtk::ShortcutTrigger::parse_string(&key).expect("valid trigger"))
+                .action(&gtk::NamedAction::new("win.favorite"))
+                .arguments(&n.to_variant())
+                .build();
+            controller.add_shortcut(shortcut);
+        }
+        let shortcuts: [(&str, &str, Option<&str>); 15] = [
             ("l", "win.tool", Some("lasso")),
             ("<Control>z", "win.undo", None),
             ("<Control><Shift>z|<Control>y", "win.redo", None),

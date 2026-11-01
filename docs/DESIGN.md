@@ -183,8 +183,8 @@ Code: `crates/render/src/ink.rs`.
 | Source | Controller | Behaviour |
 | --- | --- | --- |
 | Stylus tip | `GestureStylus`, `stylus_only = true` | draw with active tool; points from `backlog()` + current event (GTK coalesces motion events, the backlog has the full-rate samples); pressure from `axis(Pressure)` |
-| Stylus eraser end | same, `device_tool().tool_type() == Eraser` | eraser regardless of selected tool |
-| Stylus barrel button | same, button mask (`BUTTON2`/`BUTTON3`) at pen-down | hold → temporary eraser (configurable: lasso); pressed with the tip down, the ink so far stays and the rest of the stroke erases other strokes. `GestureStylus` emits *down*/*up* for every button, so a barrel press also arrives as *down* (GDK maps `BTN_STYLUS` to button 2 and `BTN_STYLUS2` to 3, but under GNOME 50 the S Pen's arrives as 3; under X11 the barrel doesn't work): only button 1 starts or ends a stroke. A press mid-stroke resets the gesture (*cancel*), but *motion* and *up* keep coming |
+| Stylus eraser end | same, `device_tool().tool_type() == Eraser` | the secondary action (a preset, the eraser by default, or the lasso) regardless of selected tool |
+| Stylus barrel button | same, button mask (`BUTTON2`/`BUTTON3`) at pen-down | hold → the secondary action; pressed with the tip down, the ink so far stays and the rest of the stroke uses the secondary action (an eraser leaves the stroke so far alone). `GestureStylus` emits *down*/*up* for every button, so a barrel press also arrives as *down* (GDK maps `BTN_STYLUS` to button 2 and `BTN_STYLUS2` to 3, but under GNOME 50 the S Pen's arrives as 3; under X11 the barrel doesn't work): only button 1 starts or ends a stroke. A press mid-stroke resets the gesture (*cancel*), but *motion* and *up* keep coming |
 | One finger | `GtkScrolledWindow`'s own touch pan | scroll with kinetic momentum |
 | Two fingers | `GestureZoom` | pinch zoom around the centroid |
 | Two-/three-finger tap | legacy controller on the tab view (`touch.rs`) | undo / redo (setting); taps are watched, not claimed |
@@ -370,15 +370,22 @@ AdwApplicationWindow
          └─ AdwTabView → per tab: GtkOverlay
             ├─ GtkScrolledWindow > Canvas
             └─ floating pill (bottom centre):
-               AdwToggleGroup [pen | highlighter | eraser | lasso] │ 1–6 colour swatches
-               (pen, highlighter) │ 1–5 size slots (pen, highlighter, eraser) │ [undo] [redo]
+               AdwToggleGroup [favourite presets… | lasso] │ 1–6 colour swatches
+               (ink, highlighter) │ 1–5 size slots (any preset) │ [undo] [redo]
 ```
 
-- **Tools:** tap the active pen again → pressure toggle; the active lasso → loop, rectangle, stroke or add space.
+- **Tools:** the tool group is built in code from the favourite presets (`preset.rs`, in the
+  settings; docs/tool-presets.md) plus the lasso: each preset button shows its kind's icon with
+  a dot in its current colour; 1–9 pick favourites, L the lasso. A preset is ink, a
+  highlighter (under or over the ink) or an eraser, with its own swatches, size slots,
+  opacity, pressure switch and tip roundness. Tap the active preset again → its options
+  (`window/presets.rs`, the same editor as Preferences → Tools, which lists, stars,
+  duplicates, deletes and adds presets and picks the stylus's secondary action); the active
+  lasso → loop, rectangle, stroke or add space.
   Tap the selected swatch again → palette (`AdwWrapBox`) + an HSV colour wheel drawn from
   gradient nodes (`wheel.rs`); the selected size slot → width slider. How many swatches and
-  size slots show is a preference. The eraser has size slots (radius in logical px, also used
-  by the stylus's eraser end and barrel) and no swatches; the lasso has neither. Cut, copy,
+  size slots show is a preference. An eraser preset has size slots (radius in logical px) and
+  no swatches; the lasso has neither. Cut, copy,
   paste, delete, change style, arrange, undo and redo are in a context menu (`GtkPopoverMenu`,
   built per opening; cut, copy, delete, change style and arrange only on the selection, Paste greyed out with nothing
   to paste). It opens with any tool, per input: the **mouse** right-clicks anywhere (a compact
@@ -391,10 +398,11 @@ AdwApplicationWindow
   kinetic drag, so each item's click gesture is swapped for one that activates on release;
   palm rejection leaves touches on popovers alone. Opened away from the selection, Paste pastes centred on
   that point. Change style opens a popover at the press with the selection's style, for now
-  only its colour: presets (the highlighter's when the selection is all highlighter ink) and
-  the colour wheel. Highlighter strokes keep their translucency; each pick is one undo step
-  and redraws the selection's texture once. Tool settings and slots are app settings
-  (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
+  only its colour: presets (the highlighter tints when the selection is all highlights) and
+  the colour wheel. Every stroke keeps its own opacity; each pick is one undo step
+  and redraws the selection's texture once. Presets, their slots and the secondary action are app settings
+  (`~/.config/cera/settings.json`, version 2; version 1's per-tool fields become the three
+  default presets). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.
 - **Pages** (`window/pages.rs`): the Pages toggle next to the sidebar button (or Ctrl+P)
   opens the sidebar on the current note's pages; toggled off or with the back button it

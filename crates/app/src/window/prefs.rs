@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Preferences (paper for new notes in this vault, the tool bar's position and slots, touch gestures, tile
-//! cache) and the keyboard shortcuts list.
+//! Preferences (paper for new notes in this vault, the tool bar's position and slots, touch
+//! gestures, tile cache; tool presets on their own page, `presets.rs`) and the keyboard
+//! shortcuts list.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -8,7 +9,8 @@ use cera_core::PaperKind;
 use gtk::{gio, glib};
 
 use super::CeraWindow;
-use crate::canvas::{MAX_COLOR_SLOTS, MAX_SIZE_SLOTS};
+use super::presets::ToolsPage;
+use crate::preset::{MAX_COLOR_SLOTS, MAX_SIZE_SLOTS};
 use crate::settings::{self, ToolbarPosition};
 use crate::vault::{PageSize, VaultConfig};
 
@@ -22,7 +24,16 @@ const SIZES: [(PageSize, &str); 2] = [(PageSize::A4, "A4"), (PageSize::Letter, "
 
 impl CeraWindow {
     pub(super) fn show_preferences(&self) {
-        let page = adw::PreferencesPage::new();
+        self.show_preferences_page(None);
+    }
+
+    /// The preferences dialog, on page `name` ("tools") or the first.
+    pub(super) fn show_preferences_page(&self, name: Option<&str>) {
+        let page = adw::PreferencesPage::builder()
+            .name("general")
+            .title("General")
+            .icon_name("preferences-system-symbolic")
+            .build();
         let vault = self.imp().vault.borrow().clone();
         if let Some(vault) = vault {
             let new = vault.config.new_note.clone();
@@ -206,6 +217,14 @@ impl CeraWindow {
 
         let dialog = adw::PreferencesDialog::new();
         dialog.add(&page);
+        let tools = ToolsPage::new(&dialog);
+        dialog.add(&tools.page);
+        if let Some(name) = name {
+            dialog.set_visible_page_name(name);
+        }
+        // The page's rows hold it weakly; the dialog keeps it alive.
+        let tools = std::cell::RefCell::new(Some(tools));
+        dialog.connect_closed(move |_| drop(tools.take()));
         dialog.present(Some(self));
     }
 
@@ -254,12 +273,7 @@ impl CeraWindow {
             ),
             (
                 "Tools",
-                &[
-                    ("Pen", "p"),
-                    ("Highlighter", "h"),
-                    ("Eraser", "e"),
-                    ("Lasso", "l"),
-                ],
+                &[("Tool bar presets, in order", "1-9"), ("Lasso", "l")],
             ),
             (
                 "Selection",
@@ -281,13 +295,18 @@ impl CeraWindow {
             let group = adw::PreferencesGroup::builder().title(title).build();
             for (name, accel) in rows {
                 let row = adw::ActionRow::builder().title(*name).build();
+                // "a b" lists alternatives, "a-b" a range.
+                let (accel, joiner) = match accel.split_once('-') {
+                    Some((a, b)) => (format!("{a} {b}"), " – "),
+                    None => (accel.to_string(), " or "),
+                };
                 let keys: Vec<String> = accel
                     .split_whitespace()
                     .filter_map(gtk::accelerator_parse)
                     .map(|(key, mods)| gtk::accelerator_get_label(key, mods).to_string())
                     .collect();
                 let label = gtk::Label::builder()
-                    .label(keys.join(" or "))
+                    .label(keys.join(joiner))
                     .valign(gtk::Align::Center)
                     .css_classes(["dim-label", "numeric"])
                     .build();
@@ -310,7 +329,7 @@ impl CeraWindow {
 }
 
 /// Applies a tool bar preference to every window.
-fn for_each_window(f: impl Fn(&CeraWindow)) {
+pub(super) fn for_each_window(f: impl Fn(&CeraWindow)) {
     let Some(app) = gio::Application::default().and_downcast::<gtk::Application>() else {
         return;
     };

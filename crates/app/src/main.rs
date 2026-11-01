@@ -7,6 +7,7 @@ mod dialogs;
 mod folder;
 mod note;
 mod palm;
+mod preset;
 mod settings;
 mod sidebar;
 mod swatch;
