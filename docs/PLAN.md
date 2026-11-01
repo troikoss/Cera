@@ -234,8 +234,8 @@ lines follow in M9.
 - [x] Tools page in Preferences: list, favourite, secondary action (a drop-down), edit,
       duplicate, delete, add, restore defaults
 - [x] The stylus's eraser end and barrel use the secondary preset (or the lasso)
-- [x] Change style in the context menu: apply a preset to the selection; colour, width
-      (proportional), tip and, for highlights, opacity
+- [x] Change style in the context menu: apply a preset to the selection; type (ink or
+      highlighter), colour, width (proportional), tip and, for highlights, opacity
 
 Highlighters always draw over the ink, and the default one has a square tip (the "draw over
 ink" option of the first build is gone; settings it wrote still load). With pressure off, a

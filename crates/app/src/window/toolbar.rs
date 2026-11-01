@@ -13,12 +13,12 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use cera_core::{Rgba8, StrokeStyle};
+use cera_core::{Layer, Rgba8, StrokeStyle};
 use gtk::{gdk, gio, glib};
 
 use super::{CeraWindow, rgba};
 use crate::canvas::{InputSource, ToolKind};
-use crate::preset::{HIGHLIGHTER_COLORS, Preset, PresetId, Role};
+use crate::preset::{HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, Preset, PresetId, Role};
 use crate::settings::{self, SelectShape, ToolbarPosition};
 use crate::swatch::Swatch;
 use crate::wheel::ColorWheel;
@@ -842,18 +842,36 @@ impl CeraWindow {
             move |w| canvas.recolour_selection(w.color())
         ));
 
-        // Width, tip and opacity, each applied once its slider rests.
+        // Type, then width, tip and opacity, each slider applied once it rests.
         let grid = gtk::Grid::builder()
             .column_spacing(12)
             .row_spacing(6)
             .build();
+        let kind = adw::ToggleGroup::builder().hexpand(true).build();
+        for (name, label) in [("ink", "Ink"), ("highlighter", "Highlighter")] {
+            kind.add(adw::Toggle::builder().name(name).label(label).build());
+        }
+        // A mixed selection starts with neither.
+        if current.ink {
+            kind.set_active_name(Some("ink"));
+        } else if current.highlights {
+            kind.set_active_name(Some("highlighter"));
+        }
+        grid.attach(
+            &gtk::Label::builder().label("Type").xalign(0.0).build(),
+            0,
+            0,
+            1,
+            1,
+        );
+        grid.attach(&kind, 1, 0, 1, 1);
         let (mut min, mut max) = if current.highlights {
             Role::Highlighter.width_range()
         } else {
             Role::Ink.width_range()
         };
         (min, max) = (min.min(current.width), max.max(current.width));
-        let width = style_slider(&grid, 0, "Width", (min, max), 0.1, current.width);
+        let width = style_slider(&grid, 1, "Width", (min, max), 0.1, current.width);
         width.set_format_value_func(|_, v| format!("{} pt", fmt_pt(v as f32)));
         // The first stroke takes the slider's width and the others keep their proportion to
         // it, so a highlight and the ink beside it both grow.
@@ -863,7 +881,7 @@ impl CeraWindow {
             canvas
                 .restyle_selection(|st| st.restyled(st.style(), st.color(), st.width() * k, false));
         });
-        let tip = style_slider(&grid, 1, "Tip", (0.0, 1.0), 0.05, current.roundness);
+        let tip = style_slider(&grid, 2, "Tip", (0.0, 1.0), 0.05, current.roundness);
         tip.set_draw_value(false);
         tip.add_mark(0.0, gtk::PositionType::Bottom, Some("Square"));
         tip.add_mark(1.0, gtk::PositionType::Bottom, Some("Round"));
@@ -878,17 +896,60 @@ impl CeraWindow {
             });
         });
         let alpha = f32::from(current.color.a) / 255.0;
-        let opacity = style_slider(&grid, 2, "Opacity", (0.05, 1.0), 0.05, alpha);
+        let opacity = style_slider(&grid, 3, "Opacity", (0.05, 1.0), 0.05, alpha);
         opacity.set_format_value_func(|_, v| format!("{:.0} %", v * 100.0));
+        let opacity_label = grid.child_at(0, 3);
         // Ink is always opaque.
-        opacity.set_sensitive(current.highlights);
-        if let Some(label) = grid.child_at(0, 2) {
-            label.set_sensitive(current.highlights);
-        }
-        on_rest(&opacity, &canvas, |canvas, o| {
+        let slider = opacity.clone();
+        let set_translucent = move |on: bool| {
+            slider.set_sensitive(on);
+            if let Some(label) = &opacity_label {
+                label.set_sensitive(on);
+            }
+        };
+        set_translucent(current.highlights);
+        let opacity_changed = on_rest(&opacity, &canvas, |canvas, o| {
             let a = (o.clamp(0.0, 1.0) * 255.0).round() as u8;
             canvas.restyle_selection(|st| st.with_color(Rgba8 { a, ..st.color() }));
         });
+        // Ink becomes opaque; a highlight drawn over the ink is translucent, so an opaque
+        // stroke takes the highlighter's default opacity rather than hide what is under it.
+        kind.connect_active_name_notify(glib::clone!(
+            #[weak]
+            canvas,
+            move |group| {
+                let highlighter = match group.active_name().as_deref() {
+                    Some("highlighter") => true,
+                    Some("ink") => false,
+                    _ => return,
+                };
+                let (layer, default_alpha) = if highlighter {
+                    (Layer::Over, HIGHLIGHTER_ALPHA)
+                } else {
+                    (Layer::Ink, 255)
+                };
+                canvas.restyle_selection(|st| {
+                    let style = StrokeStyle {
+                        layer,
+                        ..st.style()
+                    };
+                    let a = match (highlighter, st.color().a) {
+                        (true, 255) => default_alpha,
+                        (true, a) => a,
+                        (false, _) => 255,
+                    };
+                    st.restyled(style, Rgba8 { a, ..st.color() }, st.width(), false)
+                });
+                set_translucent(highlighter);
+                // Show the new opacity without applying it again.
+                let shown = canvas.selection_style().map(|s| s.color.a);
+                if let Some(a) = shown {
+                    opacity.block_signal(&opacity_changed);
+                    opacity.set_value(f64::from(a) / 255.0);
+                    opacity.unblock_signal(&opacity_changed);
+                }
+            }
+        ));
         // The sliders sit beside the wheel, which keeps the popover short enough for a
         // landscape tablet.
         let row = gtk::Box::builder().spacing(18).build();
@@ -928,7 +989,7 @@ fn on_rest(
     scale: &gtk::Scale,
     canvas: &crate::canvas::Canvas,
     f: impl Fn(&crate::canvas::Canvas, f32) + 'static,
-) {
+) -> glib::SignalHandlerId {
     let pending = Rc::new(std::cell::RefCell::new(None::<glib::SourceId>));
     let f = Rc::new(f);
     let canvas = canvas.downgrade();
@@ -945,7 +1006,7 @@ fn on_rest(
             }
         });
         *pending.borrow_mut() = Some(id);
-    });
+    })
 }
 
 /// Lets a finger scroll the menu with GTK's own kinetic scrolling, starting on an item too.

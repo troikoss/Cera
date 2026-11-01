@@ -402,7 +402,9 @@ AdwApplicationWindow
   non-eraser preset (gives every selected stroke its colour, opacity, width, tip and layer,
   and full pressure if the preset has pressure off), a palette (the highlighter tints when
   the selection is all highlights) and the colour wheel (each stroke keeps its own opacity),
-  and sliders beside the wheel for width (the first stroke takes the value, the others keep
+  and beside the wheel a type switch (ink or highlighter: the layer; ink turns opaque, an
+  opaque stroke turned highlighter takes the highlighter's default opacity; neither is
+  active for a mixed selection) and sliders for width (the first stroke takes the value, the others keep
   their proportion to it), tip and, for an all-highlight selection, opacity. Each pick, and
   each slider once it rests for 250 ms, is one undo step (`restyle_selection`) and redraws
   the selection's texture once; the selection's bounds follow the new widths. Presets, their slots and the secondary action are app settings

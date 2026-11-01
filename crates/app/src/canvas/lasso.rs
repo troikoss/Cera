@@ -126,6 +126,8 @@ pub struct SelectionStyle {
     pub roundness: f32,
     /// Every selected stroke is a highlight (not ink).
     pub highlights: bool,
+    /// Every selected stroke is ink. Neither this nor `highlights` for a mixed selection.
+    pub ink: bool,
 }
 
 /// Deselected strokes shown from their texture until the tiles under them include them.
@@ -826,6 +828,7 @@ impl Canvas {
             width: first.width(),
             roundness: first.style().roundness(),
             highlights: s.strokes.iter().all(|st| st.style().layer != InkLayer::Ink),
+            ink: s.strokes.iter().all(|st| st.style().layer == InkLayer::Ink),
         })
     }
 
