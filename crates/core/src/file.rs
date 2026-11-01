@@ -263,6 +263,12 @@ impl NoteFile {
         &self.path
     }
 
+    /// Records that the file was renamed or moved to `path` while open. The open handle and
+    /// map follow the inode; only compaction, which writes a new file, uses the path.
+    pub fn set_path(&mut self, path: impl Into<PathBuf>) {
+        self.path = path.into();
+    }
+
     pub fn file_len(&self) -> u64 {
         self.len
     }

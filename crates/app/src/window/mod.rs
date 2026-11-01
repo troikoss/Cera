@@ -1,0 +1,424 @@
+//! The main window: vault sidebar, one tab per open note, and the floating tool bar.
+//!
+//! - `mod.rs`: widgets, actions and the tool bar.
+//! - `tabs.rs`: notes in tabs: opening, autosave, closing, restoring the workspace.
+//! - `files.rs`: the vault: opening one; creating, renaming, moving, trashing and importing.
+
+mod files;
+mod tabs;
+
+use std::cell::{Cell, OnceCell, RefCell};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::time::Duration;
+
+use adw::prelude::*;
+use adw::subclass::prelude::*;
+use cera_core::Rgba8;
+use cera_render::tile::DocId;
+use cera_render::worker::{Renderer, TileResult};
+use gtk::{gdk, gio, glib};
+
+use crate::canvas::{Canvas, HIGHLIGHTER_COLORS, PEN_COLORS, ToolKind, Tools};
+use crate::sidebar::Sidebar;
+use crate::swatch::Swatch;
+use crate::vault::{Vault, Workspace};
+
+/// Where a render result goes: the canvas or page sorter showing that note.
+type Sink = Rc<dyn Fn(TileResult)>;
+
+mod imp {
+    use super::*;
+
+    #[derive(Default, gtk::CompositeTemplate)]
+    #[template(resource = "/io/github/troikoss/Cera/window.ui")]
+    pub struct CeraWindow {
+        #[template_child]
+        pub split_view: TemplateChild<adw::OverlaySplitView>,
+        #[template_child]
+        pub toasts: TemplateChild<adw::ToastOverlay>,
+        #[template_child]
+        pub sidebar: TemplateChild<Sidebar>,
+        #[template_child]
+        pub title: TemplateChild<adw::WindowTitle>,
+        #[template_child]
+        pub stack: TemplateChild<gtk::Stack>,
+        #[template_child]
+        pub recent_list: TemplateChild<gtk::ListBox>,
+        #[template_child]
+        pub note_overlay: TemplateChild<gtk::Overlay>,
+        #[template_child]
+        pub tab_view: TemplateChild<adw::TabView>,
+        #[template_child]
+        pub toolbar: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub tools: TemplateChild<adw::ToggleGroup>,
+        pub(super) tool_state: Rc<Tools>,
+        pub(super) swatches: RefCell<Vec<(gtk::ToggleButton, Swatch)>>,
+        pub(super) renderer: OnceCell<Rc<Renderer>>,
+        pub(super) sinks: RefCell<HashMap<DocId, Sink>>,
+        pub(super) next_doc: Cell<DocId>,
+        pub(super) autosave: RefCell<HashMap<DocId, glib::SourceId>>,
+        pub(super) vault: RefCell<Option<Vault>>,
+        pub(super) workspace: RefCell<Workspace>,
+        pub(super) workspace_save: RefCell<Option<glib::SourceId>>,
+        /// Set while tabs are being restored, so the half-restored state isn't saved.
+        pub(super) restoring: Cell<bool>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for CeraWindow {
+        const NAME: &'static str = "CeraWindow";
+        type Type = super::CeraWindow;
+        type ParentType = adw::ApplicationWindow;
+
+        fn class_init(klass: &mut Self::Class) {
+            Canvas::ensure_type();
+            Sidebar::ensure_type();
+            klass.bind_template();
+        }
+
+        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
+            obj.init_template();
+        }
+    }
+
+    impl ObjectImpl for CeraWindow {
+        fn constructed(&self) {
+            self.parent_constructed();
+            let obj = self.obj();
+            obj.setup_actions();
+            obj.setup_renderer();
+            obj.setup_toolbar();
+            obj.setup_tabs();
+            obj.setup_drop();
+            self.note_overlay.add_controller(crate::palm::controller());
+            obj.rebuild_recent();
+            obj.update_stack();
+            if crate::debug_enabled() {
+                obj.add_debug_overlay();
+            }
+        }
+    }
+
+    impl WidgetImpl for CeraWindow {}
+
+    impl WindowImpl for CeraWindow {
+        fn close_request(&self) -> glib::Propagation {
+            self.obj().shutdown();
+            self.parent_close_request()
+        }
+    }
+
+    impl ApplicationWindowImpl for CeraWindow {}
+    impl AdwApplicationWindowImpl for CeraWindow {}
+}
+
+glib::wrapper! {
+    pub struct CeraWindow(ObjectSubclass<imp::CeraWindow>)
+        @extends adw::ApplicationWindow, gtk::ApplicationWindow, gtk::Window, gtk::Widget,
+        @implements gio::ActionGroup, gio::ActionMap, gtk::Accessible, gtk::Buildable,
+            gtk::ConstraintTarget, gtk::Native, gtk::Root, gtk::ShortcutManager;
+}
+
+impl CeraWindow {
+    pub fn new(app: &impl IsA<gtk::Application>) -> Self {
+        glib::Object::builder().property("application", app).build()
+    }
+
+    /// Saves every open note and the workspace; for closing the window or quitting.
+    pub fn shutdown(&self) {
+        self.save_workspace_now();
+        self.save_all();
+    }
+
+    /// One pool of render threads per window; results go to whoever registered the note.
+    fn setup_renderer(&self) {
+        let threads =
+            std::thread::available_parallelism().map_or(1, |n| if n.get() >= 4 { 2 } else { 1 });
+        let (tx, rx) = async_channel::unbounded();
+        let _ = self.imp().renderer.set(Rc::new(Renderer::new(threads, tx)));
+        let weak = self.downgrade();
+        glib::spawn_future_local(async move {
+            while let Ok(result) = rx.recv().await {
+                let Some(win) = weak.upgrade() else { break };
+                let sink = win.imp().sinks.borrow().get(&result.key.doc).cloned();
+                if let Some(sink) = sink {
+                    sink(result);
+                }
+            }
+        });
+    }
+
+    fn renderer(&self) -> Rc<Renderer> {
+        self.imp()
+            .renderer
+            .get()
+            .expect("set up in constructed")
+            .clone()
+    }
+
+    fn setup_actions(&self) {
+        let imp = self.imp();
+        // Toggles the sidebar; drives the header button and F9.
+        let show_sidebar =
+            gio::PropertyAction::new("show-sidebar", &*imp.split_view, "show-sidebar");
+        self.add_action(&show_sidebar);
+
+        let canvas_action = |name: &str, f: fn(&Canvas)| {
+            gio::ActionEntry::builder(name)
+                .activate(move |win: &Self, _, _| {
+                    if let Some(canvas) = win.canvas() {
+                        f(&canvas);
+                    }
+                })
+                .build()
+        };
+        let path_action = |name: &str, f: fn(&Self, PathBuf)| {
+            gio::ActionEntry::builder(name)
+                .parameter_type(Some(glib::VariantTy::STRING))
+                .activate(move |win: &Self, _, param| {
+                    if let Some(path) = param.and_then(|p| p.get::<String>()) {
+                        f(win, PathBuf::from(path));
+                    }
+                })
+                .build()
+        };
+        // "" means the sidebar's current folder.
+        let folder_action = |name: &str, f: fn(&Self, Option<PathBuf>)| {
+            gio::ActionEntry::builder(name)
+                .parameter_type(Some(glib::VariantTy::STRING))
+                .activate(move |win: &Self, _, param| {
+                    let path = param.and_then(|p| p.get::<String>()).unwrap_or_default();
+                    f(win, (!path.is_empty()).then(|| PathBuf::from(path)));
+                })
+                .build()
+        };
+        let pair_action = |name: &str, f: fn(&Self, PathBuf, String)| {
+            gio::ActionEntry::builder(name)
+                .parameter_type(Some(glib::VariantTy::new("(ss)").expect("valid type")))
+                .activate(move |win: &Self, _, param| {
+                    if let Some((a, b)) = param.and_then(|p| p.get::<(String, String)>()) {
+                        f(win, PathBuf::from(a), b);
+                    }
+                })
+                .build()
+        };
+        let simple = |name: &str, f: fn(&Self)| {
+            gio::ActionEntry::builder(name)
+                .activate(move |win: &Self, _, _| f(win))
+                .build()
+        };
+        let tool = gio::ActionEntry::builder("tool")
+            .parameter_type(Some(glib::VariantTy::STRING))
+            .activate(|win: &Self, _, param| {
+                if let Some(name) = param.and_then(|p| p.get::<String>()) {
+                    win.imp().tools.set_active_name(Some(&name));
+                }
+            })
+            .build();
+        self.add_action_entries([
+            simple("open", Self::open_dialog),
+            simple("open-vault", |win| win.open_vault_dialog(false)),
+            simple("create-vault", |win| win.open_vault_dialog(true)),
+            path_action("open-vault-path", |win, path| win.open_vault(&path, false)),
+            path_action("open-file", |win, path| win.open_file(path)),
+            path_action("move-file", Self::move_file),
+            path_action("trash-file", Self::trash_file),
+            folder_action("new-note", Self::new_note),
+            folder_action("new-folder", Self::new_folder),
+            folder_action("import-pdf", Self::import_pdf_dialog),
+            pair_action("rename-file", Self::rename_file),
+            pair_action("drop-file", |win, src, dest| {
+                win.drop_file(src, PathBuf::from(dest))
+            }),
+            simple("close-tab", Self::close_current_tab),
+            simple("search", |win| {
+                win.imp().split_view.set_show_sidebar(true);
+                win.imp().sidebar.start_search();
+            }),
+            canvas_action("undo", Canvas::undo),
+            canvas_action("redo", Canvas::redo),
+            canvas_action("zoom-in", |c| c.zoom_step(1)),
+            canvas_action("zoom-out", |c| c.zoom_step(-1)),
+            canvas_action("zoom-fit", Canvas::zoom_fit_width),
+            tool,
+        ]);
+        self.update_note_actions();
+    }
+
+    /// Tool toggles set the shared tool; three swatches show the pen's or the highlighter's
+    /// colours.
+    fn setup_toolbar(&self) {
+        let imp = self.imp();
+        imp.tools.connect_active_name_notify(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            move |group| {
+                let tool = group
+                    .active_name()
+                    .as_deref()
+                    .and_then(ToolKind::from_name)
+                    .unwrap_or(ToolKind::Pen);
+                win.imp().tool_state.tool.set(tool);
+                win.update_swatches();
+            }
+        ));
+        let mut first: Option<gtk::ToggleButton> = None;
+        for i in 0..3 {
+            let swatch = Swatch::new(gdk::RGBA::BLACK);
+            let button = gtk::ToggleButton::builder()
+                .child(&swatch)
+                .css_classes(["flat"])
+                .tooltip_text("Colour")
+                .build();
+            button.set_group(first.as_ref());
+            first.get_or_insert_with(|| button.clone());
+            button.connect_toggled(glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                move |b| {
+                    if b.is_active() {
+                        win.imp().tool_state.set_color(win.palette()[i]);
+                    }
+                }
+            ));
+            imp.toolbar.append(&button);
+            imp.swatches.borrow_mut().push((button, swatch));
+        }
+        self.update_swatches();
+    }
+
+    fn palette(&self) -> [Rgba8; 3] {
+        match self.imp().tool_state.tool.get() {
+            ToolKind::Highlighter => HIGHLIGHTER_COLORS,
+            _ => PEN_COLORS,
+        }
+    }
+
+    fn update_swatches(&self) {
+        let imp = self.imp();
+        let palette = self.palette();
+        let current = imp.tool_state.color();
+        let drawing = imp.tool_state.tool.get() != ToolKind::Eraser;
+        for (i, (button, swatch)) in imp.swatches.borrow().iter().enumerate() {
+            swatch.set_color(rgba(palette[i]));
+            button.set_sensitive(drawing);
+            if palette[i] == current {
+                button.set_active(true);
+            }
+        }
+    }
+
+    /// Accepts PDFs and notes dropped anywhere on the note area.
+    fn setup_drop(&self) {
+        let target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+        target.connect_drop(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            #[upgrade_or]
+            false,
+            move |_, value, _, _| {
+                let Ok(list) = value.get::<gdk::FileList>() else {
+                    return false;
+                };
+                let Some(folder) = win.imp().sidebar.current_folder() else {
+                    for path in list.files().iter().filter_map(|f| f.path()) {
+                        win.open_path(path);
+                    }
+                    return true;
+                };
+                for path in list.files().iter().filter_map(|f| f.path()) {
+                    win.drop_file(path, folder.clone());
+                }
+                true
+            }
+        ));
+        self.imp().stack.add_controller(target);
+    }
+
+    fn open_dialog(&self) {
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("PDFs and notes"));
+        filter.add_suffix("pdf");
+        filter.add_suffix("cera");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        let dialog = gtk::FileDialog::builder()
+            .title("Open PDF or Note")
+            .filters(&filters)
+            .default_filter(&filter)
+            .build();
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            async move {
+                // An error here means the dialog was cancelled.
+                let Ok(file) = dialog.open_future(Some(&win)).await else {
+                    return;
+                };
+                if let Some(path) = file.path() {
+                    win.open_path(path);
+                }
+            }
+        ));
+    }
+
+    /// The content area: the welcome page without a vault, a hint without tabs, else tabs.
+    fn update_stack(&self) {
+        let imp = self.imp();
+        let name = if imp.tab_view.n_pages() > 0 {
+            "tabs"
+        } else if imp.vault.borrow().is_some() {
+            "vault"
+        } else {
+            "welcome"
+        };
+        imp.stack.set_visible_child_name(name);
+    }
+
+    fn toast(&self, text: &str) {
+        self.imp().toasts.add_toast(adw::Toast::new(text));
+    }
+
+    /// `CERA_DEBUG=1`: tiles, memory and frame times in the corner, refreshed twice a second.
+    fn add_debug_overlay(&self) {
+        let label = gtk::Label::builder()
+            .halign(gtk::Align::End)
+            .valign(gtk::Align::Start)
+            .margin_top(8)
+            .margin_end(8)
+            .can_target(false)
+            .build();
+        label.add_css_class("debug-overlay");
+        self.imp().note_overlay.add_overlay(&label);
+        let win = self.downgrade();
+        let label = label.downgrade();
+        glib::timeout_add_local(Duration::from_millis(500), move || {
+            let (Some(win), Some(label)) = (win.upgrade(), label.upgrade()) else {
+                return glib::ControlFlow::Break;
+            };
+            if let Some(canvas) = win.canvas() {
+                label.set_text(&canvas.debug_text());
+            }
+            glib::ControlFlow::Continue
+        });
+    }
+}
+
+fn rgba(c: Rgba8) -> gdk::RGBA {
+    gdk::RGBA::new(
+        f32::from(c.r) / 255.0,
+        f32::from(c.g) / 255.0,
+        f32::from(c.b) / 255.0,
+        f32::from(c.a) / 255.0,
+    )
+}
+
+fn display_name(path: &std::path::Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}

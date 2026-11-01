@@ -16,10 +16,11 @@ mod wet;
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use cera_core::{Changes, Document, PageId, PageSpec, Rect, Rgba8};
+use cera_core::{Changes, Document, PageId, PageSpec, Rect};
 use cera_render::tile::{DocId, Grid, Layer, Scale};
 use cera_render::worker::{Renderer, TileResult};
 use gtk::prelude::*;
@@ -27,7 +28,7 @@ use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use self::cache::TileCache;
-pub use self::input::{HIGHLIGHTER_COLORS, PEN_COLORS, ToolKind};
+pub use self::input::{HIGHLIGHTER_COLORS, PEN_COLORS, ToolKind, Tools};
 use self::layout::{Layout, View};
 use self::wet::WetStroke;
 use crate::note::SharedNote;
@@ -92,7 +93,11 @@ mod imp {
         pub(super) vscroll_policy: Cell<gtk::ScrollablePolicy>,
         pub(super) note: RefCell<Option<SharedNote>>,
         pub(super) doc: RefCell<Option<CanvasDoc>>,
-        pub(super) renderer: OnceCell<Renderer>,
+        pub(super) renderer: OnceCell<Rc<Renderer>>,
+        /// Only the visible tab renders; hidden ones hold no tiles.
+        pub(super) visible: Cell<bool>,
+        /// Page to show once the canvas has a size.
+        pub(super) pending_page: Cell<Option<usize>>,
         pub(super) cache: RefCell<TileCache<gdk::Texture>>,
         pub(super) zoom: Cell<f64>,
         /// Zoom the tiles are rendered for; lags `zoom` while it changes. 0 until laid out.
@@ -110,9 +115,7 @@ mod imp {
         pub(super) wet: RefCell<Vec<WetStroke>>,
         pub(super) erasing: Cell<bool>,
         pub(super) eraser_cursor: Cell<Option<(f64, f64)>>,
-        pub(super) tool: Cell<ToolKind>,
-        pub(super) pen_color: Cell<Rgba8>,
-        pub(super) highlighter_color: Cell<Rgba8>,
+        pub(super) tools: RefCell<Rc<Tools>>,
         pub(super) current_page: Cell<u32>,
         pub(super) pinch: Cell<Option<Pinch>>,
         pub(super) pointer: Cell<(f64, f64)>,
@@ -130,6 +133,8 @@ mod imp {
                 note: RefCell::default(),
                 doc: RefCell::default(),
                 renderer: OnceCell::new(),
+                visible: Cell::new(true),
+                pending_page: Cell::new(None),
                 cache: RefCell::new(TileCache::new(TILE_BUDGET)),
                 zoom: Cell::new(1.0),
                 settled_zoom: Cell::new(0.0),
@@ -142,9 +147,7 @@ mod imp {
                 wet: RefCell::default(),
                 erasing: Cell::new(false),
                 eraser_cursor: Cell::new(None),
-                tool: Cell::new(ToolKind::Pen),
-                pen_color: Cell::new(input::PEN_COLORS[0]),
-                highlighter_color: Cell::new(input::HIGHLIGHTER_COLORS[0]),
+                tools: RefCell::default(),
                 current_page: Cell::new(0),
                 pinch: Cell::new(None),
                 pointer: Cell::new((0.0, 0.0)),
@@ -177,10 +180,6 @@ mod imp {
                     glib::ParamSpecUInt::builder("page-count")
                         .read_only()
                         .build(),
-                    // "pen", "highlighter" or "eraser", to bind to the tool bar.
-                    glib::ParamSpecString::builder("tool")
-                        .default_value(Some("pen"))
-                        .build(),
                 ]
             })
         }
@@ -202,12 +201,6 @@ mod imp {
                 }
                 "hscroll-policy" => self.hscroll_policy.set(value.get().unwrap()),
                 "vscroll-policy" => self.vscroll_policy.set(value.get().unwrap()),
-                "tool" => {
-                    let name: Option<String> = value.get().unwrap();
-                    if let Some(tool) = name.as_deref().and_then(ToolKind::from_name) {
-                        obj.set_tool(tool);
-                    }
-                }
                 _ => unreachable!(),
             }
         }
@@ -230,7 +223,6 @@ mod imp {
                 "vscroll-policy" => self.vscroll_policy.get().to_value(),
                 "current-page" => self.current_page.get().to_value(),
                 "page-count" => self.obj().page_count().to_value(),
-                "tool" => self.tool.get().name().to_value(),
                 _ => unreachable!(),
             }
         }
@@ -240,7 +232,6 @@ mod imp {
             let obj = self.obj();
             obj.add_css_class("note-canvas");
             obj.set_overflow(gtk::Overflow::Hidden);
-            obj.setup_renderer();
             obj.setup_zoom_input();
             obj.setup_drawing_input();
 
@@ -259,9 +250,16 @@ mod imp {
     impl WidgetImpl for Canvas {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             self.parent_size_allocate(width, height, baseline);
-            self.obj().fit_if_needed();
-            self.obj().configure_adjustments(None);
-            self.obj().request_tiles();
+            let obj = self.obj();
+            obj.fit_if_needed();
+            match self.pending_page.get().filter(|_| width > 0) {
+                Some(page) => {
+                    self.pending_page.set(None);
+                    obj.show_page(page);
+                }
+                None => obj.configure_adjustments(None),
+            }
+            obj.request_tiles();
         }
 
         fn realize(&self) {
@@ -292,6 +290,63 @@ impl Default for Canvas {
 }
 
 impl Canvas {
+    /// Gives the canvas the window's render threads; call once, before `set_note`.
+    pub fn set_renderer(&self, renderer: Rc<Renderer>) {
+        let _ = self.imp().renderer.set(renderer);
+    }
+
+    /// Shares the window's tool settings; call before drawing.
+    pub fn set_tools(&self, tools: Rc<Tools>) {
+        *self.imp().tools.borrow_mut() = tools;
+    }
+
+    fn tools(&self) -> Rc<Tools> {
+        self.imp().tools.borrow().clone()
+    }
+
+    pub fn note(&self) -> Option<SharedNote> {
+        self.imp().note.borrow().clone()
+    }
+
+    pub fn doc_id(&self) -> Option<DocId> {
+        self.imp().doc.borrow().as_ref().map(|d| d.id)
+    }
+
+    /// A hidden tab drops its tiles and stops rendering; showing it asks for them again.
+    pub fn set_active(&self, active: bool) {
+        let imp = self.imp();
+        if imp.visible.replace(active) == active {
+            return;
+        }
+        if active {
+            self.request_tiles();
+            self.queue_draw();
+        } else if let Some(id) = self.doc_id() {
+            self.renderer().set_jobs(id, Vec::new());
+            imp.cache.borrow_mut().remove_doc(id);
+            imp.ink_expected.borrow_mut().clear();
+            imp.wet.borrow_mut().clear();
+        }
+    }
+
+    /// Scrolls so `page` (0-based) is at the top; waits for the first layout if needed.
+    pub fn show_page(&self, page: usize) {
+        let imp = self.imp();
+        if self.width() == 0 || imp.settled_zoom.get() == 0.0 {
+            imp.pending_page.set(Some(page));
+            return;
+        }
+        let y = {
+            let doc = imp.doc.borrow();
+            let Some(doc) = doc.as_ref() else { return };
+            let page = page.min(doc.layout.len().saturating_sub(1));
+            (doc.layout.page_rect(page).y - layout::GAP_PT) * imp.zoom.get()
+        };
+        let x = self.scroll().0;
+        self.configure_adjustments(Some((x, y.max(0.0))));
+        self.update_current_page();
+    }
+
     /// Shows `note` (or nothing), fitted to the width and scrolled to the top.
     pub fn set_note(&self, note: Option<SharedNote>) {
         let imp = self.imp();
@@ -479,23 +534,15 @@ impl Canvas {
     }
 
     fn renderer(&self) -> &Renderer {
-        self.imp().renderer.get().expect("set up in constructed")
+        self.imp()
+            .renderer
+            .get()
+            .expect("set_renderer is called first")
     }
 
-    fn setup_renderer(&self) {
-        let threads =
-            std::thread::available_parallelism().map_or(1, |n| if n.get() >= 4 { 2 } else { 1 });
-        let (tx, rx) = async_channel::unbounded::<TileResult>();
-        let _ = self.imp().renderer.set(Renderer::new(threads, tx));
-        // Holds only a weak reference, so the canvas (and with it the renderer and its
-        // senders) can go away; the channel then closes and this loop ends.
-        let weak = self.downgrade();
-        glib::spawn_future_local(async move {
-            while let Ok(result) = rx.recv().await {
-                let Some(canvas) = weak.upgrade() else { break };
-                canvas.tile_ready(result);
-            }
-        });
+    /// A rendered tile for this canvas's note (the window routes results by note).
+    pub fn deliver(&self, result: TileResult) {
+        self.tile_ready(result);
     }
 
     fn setup_zoom_input(&self) {

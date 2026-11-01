@@ -41,13 +41,12 @@ impl Canvas {
         let Some(renderer) = imp.renderer.get() else {
             return;
         };
-        if imp.settle.borrow().is_some() {
-            return; // zoom still changing
+        if imp.settle.borrow().is_some() || !imp.visible.get() {
+            return; // zoom still changing, or a hidden tab
         }
         let note = imp.note.borrow().clone();
         let doc = imp.doc.borrow();
         let (Some(doc), Some(note), Some(view)) = (doc.as_ref(), note, self.view()) else {
-            renderer.set_jobs(Vec::new());
             return;
         };
         let mut note = note.borrow_mut();
@@ -181,7 +180,7 @@ impl Canvas {
             "requesting tiles"
         );
         visible.append(&mut prefetch);
-        renderer.set_jobs(visible);
+        renderer.set_jobs(doc.id, visible);
     }
 
     pub(super) fn tile_ready(&self, result: TileResult) {

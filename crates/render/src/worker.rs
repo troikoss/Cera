@@ -114,8 +114,9 @@ impl Renderer {
         self.shared.wake.notify_all();
     }
 
-    /// Replaces the queue, most important first. Jobs already rendering are skipped.
-    pub fn set_jobs(&self, jobs: Vec<TileJob>) {
+    /// Replaces `doc`'s queued jobs, most important first; other notes' jobs stay. Jobs
+    /// already rendering are skipped.
+    pub fn set_jobs(&self, doc: DocId, jobs: Vec<TileJob>) {
         let mut st = self.shared.lock();
         let State {
             queue,
@@ -123,7 +124,7 @@ impl Renderer {
             docs,
             ..
         } = &mut *st;
-        queue.clear();
+        queue.retain(|j| j.key.doc != doc);
         queue.extend(
             jobs.into_iter()
                 .filter(|j| !in_flight.contains(&j.key) && docs.contains_key(&j.key.doc)),
@@ -459,11 +460,10 @@ mod tests {
         renderer.open_doc(1, [(0, bytes)]);
         // Scale 2: a 1224 × 1584 grid of 256 px tiles. Ask for a tile inside the square and
         // one outside, plus a neighbour so the batch path (slicing) is used.
-        renderer.set_jobs(vec![
-            job(0, 0, 0, 2.0),
-            job(4, 5, 0, 2.0),
-            job(1, 0, 0, 2.0),
-        ]);
+        renderer.set_jobs(
+            1,
+            vec![job(0, 0, 0, 2.0), job(4, 5, 0, 2.0), job(1, 0, 0, 2.0)],
+        );
         let mut seen = HashMap::new();
         while seen.len() < 3 {
             let r = rx.recv_blocking().unwrap();
@@ -501,7 +501,7 @@ mod tests {
         ink_job.key.layer = crate::tile::Layer::Ink;
         ink_job.generation = 7;
         ink_job.source = JobSource::Ink(vec![stroke]);
-        renderer.set_jobs(vec![ink_job]);
+        renderer.set_jobs(1, vec![ink_job]);
         let r = rx.recv_blocking().unwrap();
         assert_eq!(r.generation, 7);
         let p = r.pixels.unwrap();

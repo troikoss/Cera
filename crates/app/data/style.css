@@ -33,3 +33,9 @@ label.debug-overlay {
 .toolbar-pill separator {
   margin: 8px 2px;
 }
+
+/* A folder in the vault tree that a dragged file would move into. */
+.navigation-sidebar row:drop(active) {
+  background-color: alpha(var(--accent-bg-color), 0.25);
+  box-shadow: none;
+}

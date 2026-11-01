@@ -8,7 +8,8 @@ tablet; the next milestone starts after your feedback. Each milestone ends with 
 can run, plus a short "test on the tablet" list.
 
 **Status:** M0–M3 done and tested on the tablet. M4 implemented; the scripted demo runs on the
-tablet, waiting for your stylus test. Still to record: the M1 stylus log and renderer choice.
+tablet, waiting for your stylus test. M5 implemented, waiting for your test. Still to record:
+the M1 stylus log and renderer choice.
 
 ## M0 — Skeleton
 
@@ -125,17 +126,22 @@ mid-writing and reopen.
 
 ## M5 — Vault
 
-- [ ] Open folder / create vault; recent vaults in `~/.config/cera/vaults.json`
-- [ ] `.cera/` per-vault folder: `vault.toml`, `workspace.json`
-- [ ] Sidebar tree: `DirectoryList` → `FilterListModel` → `SortListModel` → `TreeListModel` →
+- [x] Open folder / create vault; recent vaults in `~/.config/cera/vaults.json`
+- [x] `.cera/` per-vault folder: `vault.json`, `workspace.json` (JSON rather than TOML: one
+      parser for everything)
+- [x] Sidebar tree: `DirectoryList` → `FilterListModel` → `SortListModel` → `TreeListModel` →
       `ListView` + `TreeExpander`
-- [ ] New note (default paper), new folder, inline rename, drag-and-drop move, delete to trash
-- [ ] Import PDF dialog (`AdwDialog`: name, folder, page range, keep original) + drag-and-drop
+- [x] New note (default paper), new folder, inline rename, drag-and-drop move (mouse and pen;
+      touch scrolls, so long-press → Move To… instead), delete to trash
+- [x] Import PDF dialog (`AdwDialog`: name, folder, page range, keep original) + drag-and-drop
       onto sidebar/window; "Convert to note" when opening a `.pdf`
-- [ ] Tabs (`AdwTabView` + autohide `AdwTabBar`); inactive tabs drop tiles
-- [ ] Restore open tabs and last page per note
-- [ ] Sidebar filename search
-- [ ] Toasts for import, delete, errors
+- [x] Tabs (`AdwTabView` + autohide `AdwTabBar`); inactive tabs drop tiles
+- [x] Restore open tabs and last page per note
+- [x] Sidebar filename search (Ctrl+F)
+- [x] Toasts for import, delete, errors
+
+Notes are compacted when their tab closes if dead bytes outweigh live ink. `CERA_DEBUG=1` adds
+an `app.win` action so scripts can run window actions over D-Bus (see `application.rs`).
 
 **Test on the tablet:** set up one real subject folder and use it for a day.
 
@@ -179,4 +185,4 @@ recognition, dark paper, sync-conflict handling.
 
 - ~~Which tablet exactly~~ Galaxy Tab S9 Wi-Fi on Fedora 44 (DESIGN.md §1). Budgets in §10 were
   relaxed to fit it (2026-11-01): 128 MiB tile budget, 300-page note ≤ baseline + 200 MiB.
-- Default paper and page size for new notes (A4 ruled?)
+- ~~Default paper and page size for new notes~~ A4 ruled, 8 mm; per vault in `.cera/vault.json`.

@@ -6,9 +6,14 @@
 <gresources>
   <gresource prefix="/io/github/troikoss/Cera">
     <file>window.ui</file>
+    <file>sidebar.ui</file>
     <file>style.css</file>
     <file>icons/scalable/actions/cera-pen-symbolic.svg</file>
     <file>icons/scalable/actions/cera-highlighter-symbolic.svg</file>
     <file>icons/scalable/actions/cera-eraser-symbolic.svg</file>
+    <file>icons/scalable/actions/cera-lasso-symbolic.svg</file>
+    <file>icons/scalable/actions/cera-note-symbolic.svg</file>
+    <file>icons/scalable/actions/cera-page-add-symbolic.svg</file>
+    <file>icons/scalable/actions/cera-pdf-symbolic.svg</file>
   </gresource>
 </gresources>

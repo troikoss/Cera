@@ -63,7 +63,10 @@ glib::wrapper! {
 
 impl Swatch {
     pub fn new(color: gdk::RGBA) -> Self {
-        let swatch: Self = glib::Object::new();
+        let swatch: Self = glib::Object::builder()
+            .property("halign", gtk::Align::Center)
+            .property("valign", gtk::Align::Center)
+            .build();
         swatch.set_color(color);
         swatch
     }

@@ -56,7 +56,7 @@ fn import(pdf: &Path, out: &Path) -> Result<()> {
         bail!("{} already exists", out.display());
     }
     let started = Instant::now();
-    let (file, doc) = cera_render::import::import_pdf(pdf, out)
+    let (file, doc) = cera_render::import::import_pdf(pdf, out, None)
         .with_context(|| format!("importing {}", pdf.display()))?;
     println!(
         "imported {} pages into {} ({}) in {:.0?}",

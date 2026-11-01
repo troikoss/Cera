@@ -263,14 +263,20 @@ Deleting or reordering pages only edits the manifest; unused assets are dropped 
 ## 8. Vault
 
 - A vault is any folder. Per-vault state lives in a hidden `.cera/` folder at its root
-  (like `.obsidian/`): `vault.toml` (default paper, tool presets), `workspace.json`
-  (open tabs, last page per note, sidebar expansion).
+  (like `.obsidian/`): `vault.json` (default paper for new notes), `workspace.json`
+  (open tabs, the selected one, last page per note). Paths in them are relative to the root,
+  so a vault can move. Files are replaced atomically (write a temp file, rename).
 - Recent vaults: `~/.config/cera/vaults.json` (XDG config, no GSettings schema to install).
 - Sidebar tree, almost no custom code:
   `gtk::DirectoryList` (monitored) → `FilterListModel` (folders, `*.cera`, `*.pdf`, no dotfiles)
   → `SortListModel` (folders first, natural sort) → `TreeListModel` → `ListView` + `TreeExpander`.
-- File operations: new note, new folder, rename inline, drag-and-drop move, delete to the
-  desktop trash (`gio::File::trash`).
+- File operations: new note, new folder, rename inline, drag-and-drop move (mouse and pen;
+  a touch drag scrolls, so long-press → Move To…), delete to the desktop trash
+  (`gio::File::trash`). Rows ask the window to act through `win.*` actions with the path as
+  target. Open notes follow renames and moves (`NoteFile::set_path`).
+- Tabs: one canvas per tab sharing the window's render threads and tool settings; results
+  are routed by note id. Hidden tabs drop their tiles; each note autosaves on its own timer
+  and is compacted when its tab closes if due.
 - A `.pdf` in the vault shows with a PDF icon; opening it offers "Convert to note".
 - Thumbnails come from the note's own `Thumbnail` chunk, so no separate cache.
 - Search v1: filename filter. Later: PDF text (Poppler) indexed at import.
@@ -328,6 +334,8 @@ Measured baseline (release build, window open on the "Open a vault" page, idle):
 | --- | --- | --- | --- |
 | x86 desktop, KDE Wayland, default GSK renderer | 105 MiB | 46 MiB | M0, 2026-10-31; PSS is the fairer number since GTK's shared libs count in full in RSS |
 | Galaxy Tab S9 Wi-Fi, Fedora 44, GNOME Wayland, Vulkan (Turnip) | 120 MiB | 59 MiB | M0, 2026-11-01; 43 MiB of the PSS is anonymous memory, much of it likely the Vulkan driver |
+| Galaxy Tab S9, vault open, no note | 134 MiB | 77 MiB | M5, 2026-11-01: baseline + 14 MiB (budget + 20) |
+| Galaxy Tab S9, two tabs, 324-page note shown | 158 MiB | 100 MiB | M5, 2026-11-01; the hidden tab holds no tiles |
 
 How we check:
 

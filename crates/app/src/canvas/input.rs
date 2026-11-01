@@ -5,6 +5,7 @@
 //! On pen-up the samples are simplified into a `Stroke` and added through the note's
 //! `History`; an eraser drag removes whole strokes and undoes as one step.
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use cera_core::{Point, Rect, Rgba8, Stroke, Tool, simplify};
@@ -17,10 +18,10 @@ use super::Canvas;
 use super::tiles::ERASER_RADIUS;
 use super::wet::{Pen, WetStroke};
 
-/// Full-pressure widths in points.
-const PEN_WIDTH: f32 = 1.6;
-const HIGHLIGHTER_WIDTH: f32 = 12.0;
-/// Pressure for devices without one (the mouse).
+/// Full-pressure width presets in points: fine, medium, broad.
+pub const PEN_WIDTHS: [f32; 3] = [0.8, 1.6, 3.2];
+pub const HIGHLIGHTER_WIDTHS: [f32; 3] = [8.0, 12.0, 20.0];
+/// Pressure for devices without one (the mouse), and for the pen with pressure turned off.
 const MOUSE_PRESSURE: f64 = 0.6;
 /// Stroke simplification on pen-up: position (points) and pressure tolerances.
 const SIMPLIFY_EPS: f32 = 0.05;
@@ -61,6 +62,65 @@ impl ToolKind {
     }
 }
 
+/// The selected tool and its settings, shared by every canvas in a window.
+#[derive(Debug)]
+pub struct Tools {
+    pub tool: Cell<ToolKind>,
+    pub pen_color: Cell<Rgba8>,
+    pub highlighter_color: Cell<Rgba8>,
+    pub pen_width: Cell<f32>,
+    pub highlighter_width: Cell<f32>,
+    /// The pen's width follows the stylus pressure.
+    pub pressure: Cell<bool>,
+}
+
+impl Default for Tools {
+    fn default() -> Self {
+        Self {
+            tool: Cell::new(ToolKind::Pen),
+            pen_color: Cell::new(PEN_COLORS[0]),
+            highlighter_color: Cell::new(HIGHLIGHTER_COLORS[0]),
+            pen_width: Cell::new(PEN_WIDTHS[1]),
+            highlighter_width: Cell::new(HIGHLIGHTER_WIDTHS[1]),
+            pressure: Cell::new(true),
+        }
+    }
+}
+
+impl Tools {
+    /// The colour of the pen or highlighter, whichever is selected (the pen's otherwise).
+    pub fn color(&self) -> Rgba8 {
+        match self.tool.get() {
+            ToolKind::Highlighter => self.highlighter_color.get(),
+            _ => self.pen_color.get(),
+        }
+    }
+
+    pub fn set_color(&self, color: Rgba8) {
+        match self.tool.get() {
+            ToolKind::Highlighter => self.highlighter_color.set(color),
+            ToolKind::Pen => self.pen_color.set(color),
+            ToolKind::Eraser => {}
+        }
+    }
+
+    /// Width of the selected drawing tool.
+    pub fn width(&self) -> f32 {
+        match self.tool.get() {
+            ToolKind::Highlighter => self.highlighter_width.get(),
+            _ => self.pen_width.get(),
+        }
+    }
+
+    pub fn set_width(&self, width: f32) {
+        match self.tool.get() {
+            ToolKind::Highlighter => self.highlighter_width.set(width),
+            ToolKind::Pen => self.pen_width.set(width),
+            ToolKind::Eraser => {}
+        }
+    }
+}
+
 /// One input sample in widget coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Sample {
@@ -80,30 +140,8 @@ pub(super) struct Active {
 }
 
 impl Canvas {
-    pub fn tool(&self) -> ToolKind {
-        self.imp().tool.get()
-    }
-
-    pub fn set_tool(&self, tool: ToolKind) {
-        if self.imp().tool.replace(tool) != tool {
-            self.notify("tool");
-        }
-    }
-
-    /// The colour of the pen or highlighter, whichever is selected (the pen's for the eraser).
-    pub fn color(&self) -> Rgba8 {
-        match self.tool() {
-            ToolKind::Highlighter => self.imp().highlighter_color.get(),
-            _ => self.imp().pen_color.get(),
-        }
-    }
-
-    pub fn set_color(&self, color: Rgba8) {
-        match self.tool() {
-            ToolKind::Highlighter => self.imp().highlighter_color.set(color),
-            ToolKind::Pen => self.imp().pen_color.set(color),
-            ToolKind::Eraser => {}
-        }
+    fn tool(&self) -> ToolKind {
+        self.tools().tool.get()
     }
 
     pub(super) fn setup_drawing_input(&self) {
@@ -131,7 +169,7 @@ impl Canvas {
                 let sample = Sample {
                     x,
                     y,
-                    pressure: g.axis(gdk::AxisUse::Pressure).unwrap_or(1.0),
+                    pressure: canvas.pressure(g.axis(gdk::AxisUse::Pressure)),
                     time: event.map_or(0, |e| e.time()),
                 };
                 canvas.begin(sample, eraser_end || barrel);
@@ -140,7 +178,13 @@ impl Canvas {
         stylus.connect_motion(glib::clone!(
             #[weak(rename_to = canvas)]
             self,
-            move |g, x, y| canvas.extend(&stylus_samples(g, x, y))
+            move |g, x, y| {
+                let mut samples = stylus_samples(g, x, y);
+                if !canvas.tools().pressure.get() {
+                    samples.iter_mut().for_each(|s| s.pressure = MOUSE_PRESSURE);
+                }
+                canvas.extend(&samples);
+            }
         ));
         stylus.connect_up(glib::clone!(
             #[weak(rename_to = canvas)]
@@ -262,19 +306,15 @@ impl Canvas {
             tracing::warn!(page = id, "cannot read ink: {e}");
             return;
         }
-        let tool = self.tool();
+        let tools = self.tools();
         let pen = Pen {
-            tool: if tool == ToolKind::Highlighter {
+            tool: if tools.tool.get() == ToolKind::Highlighter {
                 Tool::Highlighter
             } else {
                 Tool::Pen
             },
-            color: self.color(),
-            width: if tool == ToolKind::Highlighter {
-                HIGHLIGHTER_WIDTH
-            } else {
-                PEN_WIDTH
-            },
+            color: tools.color(),
+            width: tools.width(),
         };
         let mut wet = WetStroke::new(id, (spec.width, spec.height), pen, self.target_scale());
         wet.extend(&[page_point(s, (x, y), origin)]);
@@ -434,9 +474,10 @@ impl Canvas {
         for row in 0..4 {
             stroke(self, line(f64::from(row), 8.0), false);
         }
-        self.set_tool(ToolKind::Highlighter);
+        let tools = self.tools();
+        let tool = tools.tool.replace(ToolKind::Highlighter);
         stroke(self, line(1.5, 0.0), false);
-        self.set_tool(ToolKind::Pen);
+        tools.tool.set(tool);
         tracing::info!("demo: drew 5 strokes");
         let weak = self.downgrade();
         glib::timeout_add_local_once(std::time::Duration::from_millis(1000), move || {
@@ -456,6 +497,17 @@ impl Canvas {
                 tracing::info!("demo: undid the erase");
             });
         });
+    }
+}
+
+impl Canvas {
+    /// The stylus pressure to draw with, or a fixed one when pressure is turned off.
+    fn pressure(&self, axis: Option<f64>) -> f64 {
+        if self.tools().pressure.get() {
+            axis.unwrap_or(1.0)
+        } else {
+            MOUSE_PRESSURE
+        }
     }
 }
 

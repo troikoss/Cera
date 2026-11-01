@@ -31,12 +31,13 @@ mod imp {
             self.obj().window().present();
         }
 
-        /// `cera file.pdf` or `cera note.cera`: show it (only one note at a time until M5).
+        /// `cera file.pdf` or `cera note.cera`: each opens in a tab (a PDF via the import
+        /// dialog).
         fn open(&self, files: &[gio::File], _hint: &str) {
             let window = self.obj().window();
             window.present();
-            if let Some(path) = files.first().and_then(|f| f.path()) {
-                glib::spawn_future_local(async move { window.open_path(path).await });
+            for path in files.iter().filter_map(|f| f.path()) {
+                window.open_path(path);
             }
         }
     }
@@ -59,10 +60,13 @@ impl CeraApplication {
             .build()
     }
 
+    /// The open window, or a new one showing the last vault.
     fn window(&self) -> CeraWindow {
-        self.active_window()
-            .and_downcast()
-            .unwrap_or_else(|| CeraWindow::new(self))
+        self.active_window().and_downcast().unwrap_or_else(|| {
+            let window = CeraWindow::new(self);
+            window.restore_last_vault();
+            window
+        })
     }
 
     fn setup_actions(&self) {
@@ -70,7 +74,7 @@ impl CeraApplication {
             .activate(|app: &Self, _, _| {
                 for window in app.windows() {
                     if let Some(window) = window.downcast_ref::<CeraWindow>() {
-                        window.save_now();
+                        window.shutdown();
                     }
                 }
                 app.quit();
@@ -80,10 +84,38 @@ impl CeraApplication {
             .activate(|app: &Self, _, _| app.show_about())
             .build();
         self.add_action_entries([quit, about]);
+        if crate::debug_enabled() {
+            // `CERA_DEBUG=1`: lets scripts run window actions over D-Bus, e.g.
+            // gdbus call --session --dest io.github.troikoss.Cera \
+            //   --object-path /io/github/troikoss/Cera --method org.gtk.Actions.Activate \
+            //   win '[<("new-folder", <"">)>]' '{}'
+            let win = gio::ActionEntry::builder("win")
+                .parameter_type(Some(glib::VariantTy::new("(sv)").expect("valid type")))
+                .activate(|app: &Self, _, param| {
+                    let Some((name, value)) =
+                        param.and_then(|p| p.get::<(String, glib::Variant)>())
+                    else {
+                        return;
+                    };
+                    let unit = value.type_() == glib::VariantTy::UNIT;
+                    if let Some(window) = app.active_window() {
+                        let _ = WidgetExt::activate_action(
+                            &window,
+                            &format!("win.{name}"),
+                            (!unit).then_some(&value),
+                        );
+                    }
+                })
+                .build();
+            self.add_action_entries([win]);
+        }
 
         self.set_accels_for_action("app.quit", &["<Control>q"]);
         self.set_accels_for_action("win.show-sidebar", &["F9"]);
         self.set_accels_for_action("win.open", &["<Control>o"]);
+        self.set_accels_for_action("win.new-note::", &["<Control>n"]);
+        self.set_accels_for_action("win.close-tab", &["<Control>w"]);
+        self.set_accels_for_action("win.search", &["<Control>f"]);
         self.set_accels_for_action("win.zoom-in", &["<Control>plus", "<Control>equal"]);
         self.set_accels_for_action("win.zoom-out", &["<Control>minus"]);
         self.set_accels_for_action("win.zoom-fit", &["<Control>0"]);
