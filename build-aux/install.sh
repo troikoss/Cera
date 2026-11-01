@@ -7,9 +7,11 @@
 #   build-aux/install.sh                 install for this user
 #   sudo PREFIX=/usr/local build-aux/install.sh
 #   build-aux/install.sh --uninstall
+#   DESTDIR=stage PREFIX=/usr build-aux/install.sh    stage for a package (no cache refresh)
 set -eu
 
 PREFIX=${PREFIX:-$HOME/.local}
+DESTDIR=${DESTDIR:-}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DATA=$ROOT/crates/app/data
 BIN=${CERA_BIN:-$ROOT/target/release/cera}
@@ -25,7 +27,7 @@ share/icons/hicolor/symbolic/apps/$ID-symbolic.svg:$DATA/icons/symbolic/apps/$ID
 "
 
 for entry in $files; do
-    dest=$PREFIX/${entry%%:*}
+    dest=$DESTDIR$PREFIX/${entry%%:*}
     rest=${entry#*:}
     src=${rest%:*}
     mode=${rest##*:}
@@ -36,8 +38,8 @@ for entry in $files; do
     fi
 done
 
-# Flatpak builds export these files and build the caches themselves.
-if [ -n "${FLATPAK_ID:-}" ]; then
+# Flatpak builds and packages export these files and build the caches themselves.
+if [ -n "${FLATPAK_ID:-}" ] || [ -n "$DESTDIR" ]; then
     exit 0
 fi
 

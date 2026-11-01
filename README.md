@@ -32,7 +32,16 @@ cargo run --release -p cera
 
 ## Install
 
-For your user (binary, desktop entry, icon, `.cera` file type), into `~/.local`:
+Release tarballs for x86_64, i686 and aarch64 are on the
+[releases page](https://github.com/troikoss/Cera/releases). They need GTK ≥ 4.18,
+libadwaita ≥ 1.7 and poppler-glib: Fedora 42, Debian 13, Ubuntu 25.04 or newer.
+To install one for your user:
+
+```bash
+tar -xf cera-*-linux-*.tar.xz -C ~/.local --strip-components=1 && update-mime-database ~/.local/share/mime
+```
+
+From source, for your user (binary, desktop entry, icon, `.cera` file type), into `~/.local`:
 
 ```bash
 cargo build --release -p cera && build-aux/install.sh

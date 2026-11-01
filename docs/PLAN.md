@@ -13,6 +13,8 @@ with real pointer, keyboard and touch input injected into a headless compositor
 (select, move, recolour, copy, paste, delete, undo), sidebar rename and Move To, search,
 import, tool and palette popovers, page sorter. The Flatpak builds against GNOME 51 and runs.
 Still yours to do: the stylus (it can't be injected) and a day of real use; the M1 stylus log.
+First release, 2026.11.1 (2026-11-01): Linux tarballs for x86_64, i686 and aarch64 built in
+Debian 13 containers (`build-aux/release-linux.sh`); Windows needs a port of `core::file` first.
 
 ## M0 — Skeleton
 

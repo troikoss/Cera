@@ -50,7 +50,7 @@
     <keyword>pdf</keyword>
   </keywords>
   <releases>
-    <release version="0.1.0" date="2026-11-01">
+    <release version="2026.11.1" date="2026-11-01">
       <description>
         <p>First release: inking, vaults with tabs, PDF import and export, page sorter and lasso.</p>
       </description>

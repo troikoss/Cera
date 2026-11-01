@@ -70,7 +70,10 @@ cargo run -p cera-cli -- export note.cera out.pdf        # also: png, import, in
 tools/rnote2cera.py note.rnote [--pdf book.pdf]          # convert Rnote notes (see its header)
 cargo build --release -p cera && build-aux/install.sh    # install into ~/.local
 flatpak-builder --user --install --force-clean build-dir build-aux/io.github.troikoss.Cera.yml
+build-aux/release-linux.sh                               # release tarballs: x86_64, i686, aarch64
 ```
+
+Versions are the release date, `YYYY.M.D` (semver allows no leading zeros); tags are `v<version>`.
 
 Scripted checks with real input, on the tablet over SSH: `tools/headless/session.sh start`
 runs Cera in a private headless mutter (own D-Bus and Wayland display, real GPU, nothing on
