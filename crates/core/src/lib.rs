@@ -16,6 +16,7 @@ mod format;
 mod geom;
 mod model;
 mod simplify;
+mod space;
 mod undo;
 
 pub use arrange::{Arrange, arrange};
@@ -28,4 +29,5 @@ pub use model::{
     Tool,
 };
 pub use simplify::simplify;
+pub use space::SPILL_GAP;
 pub use undo::{Changes, History};

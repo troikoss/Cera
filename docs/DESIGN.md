@@ -204,8 +204,14 @@ the drag selects every stroke whose ink it passes within 4 px of (segment agains
 `ink::touches_path`, so a fast swipe can't skip a thin line), and a tap selects the topmost
 stroke under it. In add-space mode a press takes every stroke that starts below it on that
 page and the drag moves them only vertically, down to insert space or up to remove it, no
-higher than the press line and no lower than the page's bottom edge (nothing spills onto the
-next page); they are deselected on release. Selected strokes leave the page's ink tiles and are drawn from
+higher than the press line and down until the line reaches the bottom edge; they are
+deselected on release. Strokes pushed across the bottom edge spill onto the next page
+(`History::push_down` in `core/src/space.rs`, one undo step): they keep their layout and start
+where that page's ink began (or, on a page without ink, at the source page's top margin),
+and that page's own ink moves down by the block's height plus an 18 pt gap, so it may spill
+in turn. The cascade adds a blank page (the vault's new-page paper) after the last page if
+needed. Strokes that arrived on a page never spill again, so a stroke taller than a page
+can't loop; arrivals are appended, so they draw on top. Selected strokes leave the page's ink tiles and are drawn from
 one texture (at most 2048 px, 16 MiB) made when the selection is, so dragging redraws no tile.
 A move, recolour or reorder (Arrange: forward, backward, front, back; a step passes the
 nearest overlapping stroke of the same tool, since highlighters always sit under pen ink;

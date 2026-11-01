@@ -5,8 +5,9 @@
 //! reorder, cut, copy and paste (also into other notes).
 //!
 //! In add-space mode a press takes every stroke that starts below it on that page, and the
-//! drag moves them straight down (inserting space) or up (removing it), kept on the page;
-//! they are deselected on release.
+//! drag moves them straight down (inserting space) or up (removing it); they are deselected
+//! on release. Ink pushed past the bottom edge spills onto the next page, which makes room
+//! for it (`cera_core::History::push_down`).
 //!
 //! The context menu with those actions (shown by the window, at the press, with any tool)
 //! opens differently per input: the mouse right-clicks anywhere; the stylus, or a drawing
@@ -22,7 +23,9 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cera_core::{Arrange, PageId, Rect, Rgba8, Stroke, Tool, arrange, polygon_contains};
+use cera_core::{
+    Arrange, Background, PageId, PageSpec, Rect, Rgba8, Stroke, Tool, arrange, polygon_contains,
+};
 use cera_render::ink;
 use cera_render::tile::{DocId, Grid, Layer, Scale, TileKey};
 use gtk::prelude::*;
@@ -212,9 +215,11 @@ impl Canvas {
             if let Some(p) = self.point_on(sel.page, x, y) {
                 sel.offset = match sel.space {
                     // Kept on the page: no higher than the line, no lower than the bottom.
+                    // No higher than the line; down until the line reaches the bottom
+                    // edge, with ink past the edge spilling onto the next page.
                     Some((line, height)) => {
                         let up = line - sel.bounds.y0;
-                        let down = (height - sel.bounds.y1).max(0.0);
+                        let down = (height - line).max(0.0);
                         (0.0, (p.1 - from.1).clamp(up, down))
                     }
                     None => (p.0 - from.0, p.1 - from.1),
@@ -248,7 +253,9 @@ impl Canvas {
         let slop = (TAP_SLOP_PX / imp.zoom.get()) as f32;
         if let Some((offset, space)) = dragged {
             let moved = offset.0.hypot(offset.1) > slop;
-            if moved {
+            if moved && space && offset.1 > 0.0 {
+                self.push_selection_down(offset.1);
+            } else if moved {
                 self.move_selection(offset);
             }
             if space {
@@ -564,6 +571,58 @@ impl Canvas {
             t.rect = t.rect.translated(dx, dy);
         }
         drop(sel);
+        self.emit_by_name::<()>("changed", &[]);
+    }
+
+    /// Commits an add-space drag down by `dy`: ink pushed past the bottom edge spills onto
+    /// the next page, which makes room for it, and so on (`History::push_down`).
+    fn push_selection_down(&self, dy: f32) {
+        let imp = self.imp();
+        let Some(note) = self.note() else { return };
+        let new_page = imp.new_page_spec.borrow().clone();
+        let result = {
+            let sel = imp.selection.borrow();
+            let Some(s) = sel.as_ref() else { return };
+            let mut note = note.borrow_mut();
+            let crate::note::Note { history, doc, .. } = &mut *note;
+            let Some(index) = doc.page_index(s.page) else {
+                return;
+            };
+            history.push_down(doc, index, &s.indices, dy, |spec| match &new_page {
+                Some(f) => f(spec),
+                None => PageSpec {
+                    background: Background::None,
+                    ..*spec
+                },
+            })
+        };
+        let changes = match result {
+            Ok(changes) => changes,
+            Err(e) => {
+                tracing::warn!("cannot add space: {e}");
+                return;
+            }
+        };
+        tracing::debug!(
+            pages = changes.ink.len(),
+            added = changes.layout,
+            "push down"
+        );
+        // The ghost shows the strokes where they were dropped until the tiles catch up;
+        // what spilled is hidden under the next page.
+        if let Some(s) = imp.selection.borrow_mut().as_mut() {
+            s.strokes = s
+                .strokes
+                .iter()
+                .map(|st| Arc::new(st.translated(0.0, dy)))
+                .collect();
+            s.bounds = s.bounds.translated(0.0, dy);
+            if let Some(t) = s.texture.as_mut() {
+                t.rect = t.rect.translated(0.0, dy);
+            }
+        }
+        self.clear_selection();
+        self.apply_changes(&note, &changes);
         self.emit_by_name::<()>("changed", &[]);
     }
 

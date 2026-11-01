@@ -27,9 +27,10 @@ Every add-on waits on the add-on system.
 
 ### Canvas and tools
 
-- [ ] Context menu on the canvas (hold or right-click); home for actions that aren't tools,
-      such as linking — D2 (a hold must not fight drawing). Started: with any tool it opens
-      from a mouse right-click, a 500 ms stylus or finger hold, or a tap on the selection
+- [x] Context menu on the canvas (hold or right-click); home for actions that aren't tools,
+      such as linking — D2 (a hold must not fight drawing). With any tool it opens from a
+      mouse right-click, a 500 ms stylus or finger hold, or a tap on the selection; linking
+      joins it with "Links on ink"
   - [x] Layer order for a selection: bring forward, send backward, bring to front, send to
         back — D1 (in the context menu; Ctrl+] / Ctrl+[)
 - [ ] Text tool — D4 (element model, Pango in the render worker, on-screen keyboard)
@@ -37,7 +38,8 @@ Every add-on waits on the add-on system.
 - [x] Add-space tool: insert or remove vertical space, standalone or as a selection mode — D2
       (D3 if ink pushed off the page spills onto the next one). Done as a lasso mode; ink
       stops at the page's bottom edge
-  - [ ] Spill ink pushed off the page onto the next one — D3
+  - [x] Spill ink pushed off the page onto the next one — D3 (the next page's ink moves down
+        to make room, cascading; a page is added at the end if needed)
 - [x] More selection tools: rectangle select, pen (stroke-touch) select, next to the lasso —
       D1 rectangle, D2 pen
   - [x] Rectangle select (a lasso mode: tap the active lasso)

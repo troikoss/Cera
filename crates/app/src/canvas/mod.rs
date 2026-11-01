@@ -76,6 +76,7 @@ impl CanvasDoc {
 
 /// The visible ink tiles of a page that should exist at a scale (those with strokes).
 type ExpectedInk = (Scale, Vec<(u16, u16)>);
+type NewPageSpec = Rc<dyn Fn(&PageSpec) -> PageSpec>;
 
 #[derive(Clone, Copy)]
 struct Pinch {
@@ -135,6 +136,8 @@ mod imp {
         pub(super) drawn: RefCell<Option<std::sync::Arc<cera_core::Stroke>>>,
         pub(super) eraser_cursor: Cell<Option<(f64, f64)>>,
         pub(super) tools: RefCell<Rc<Tools>>,
+        /// The spec of a page that add space appends when ink spills off the last one.
+        pub(super) new_page_spec: RefCell<Option<NewPageSpec>>,
         pub(super) current_page: Cell<u32>,
         pub(super) pinch: Cell<Option<Pinch>>,
         pub(super) pointer: Cell<(f64, f64)>,
@@ -173,6 +176,7 @@ mod imp {
                 erasing: Cell::new(false),
                 drawn: RefCell::default(),
                 eraser_cursor: Cell::new(None),
+                new_page_spec: RefCell::default(),
                 tools: RefCell::default(),
                 current_page: Cell::new(0),
                 pinch: Cell::new(None),
@@ -342,6 +346,11 @@ impl Canvas {
     /// Shares the window's tool settings; call before drawing.
     pub fn set_tools(&self, tools: Rc<Tools>) {
         *self.imp().tools.borrow_mut() = tools;
+    }
+
+    /// How a page added after `spec` looks (the window knows the vault's paper).
+    pub fn set_new_page_spec(&self, f: impl Fn(&PageSpec) -> PageSpec + 'static) {
+        *self.imp().new_page_spec.borrow_mut() = Some(Rc::new(f));
     }
 
     fn tools(&self) -> Rc<Tools> {

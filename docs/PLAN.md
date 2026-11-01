@@ -21,8 +21,10 @@ D2 items: pen (stroke-touch) select as a third lasso mode, page bookmarks (manif
 version 2) and add space as a fourth lasso mode. The lasso lost its swatches; a selection is
 recoloured from Change style in the context menu. The page sorter moved from its dialog into
 the sidebar, as a view next to the files, with a context menu and a bookmark toggle on each
-thumbnail and a filter for bookmarked pages; the header's bookmarks menu is gone. Checked with injected pointer and key input in the headless compositor; yours to
-test on the tablet.
+thumbnail and a filter for bookmarked pages; the header's bookmarks menu is gone. Add space
+now spills ink pushed off a page onto the next one, which makes room for it, cascading to
+a new page at the end. Checked with injected pointer and key input in the headless
+compositor; yours to test on the tablet.
 
 ## M0 — Skeleton
 

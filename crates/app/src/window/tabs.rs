@@ -131,6 +131,13 @@ impl CeraWindow {
         let canvas = Canvas::default();
         canvas.set_renderer(self.renderer());
         canvas.set_tools(imp.tool_state.clone());
+        let weak = self.downgrade();
+        canvas.set_new_page_spec(move |spec| {
+            let paper = weak
+                .upgrade()
+                .map_or(cera_core::Paper::BLANK, |win| win.new_page_paper());
+            super::pages::blank_like(spec, paper)
+        });
         canvas.set_active(false);
         canvas.set_tile_budget((crate::settings::with(|s| s.tile_budget_mib) as usize) << 20);
         canvas.set_note(Some(note));

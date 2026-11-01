@@ -23,7 +23,7 @@ pub struct Changes {
 }
 
 impl Changes {
-    fn add_ink(&mut self, page: PageId, area: Rect) {
+    pub(crate) fn add_ink(&mut self, page: PageId, area: Rect) {
         match self.ink.iter_mut().find(|(p, _)| *p == page) {
             Some((_, r)) => *r = r.union(area),
             None => self.ink.push((page, area)),
