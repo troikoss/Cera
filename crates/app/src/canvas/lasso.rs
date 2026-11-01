@@ -683,6 +683,15 @@ impl Canvas {
         self.emit_by_name::<()>("changed", &[]);
     }
 
+    /// The selection's colour (its first stroke's) and whether it is all highlighter ink.
+    pub fn selection_style(&self) -> Option<(Rgba8, bool)> {
+        let sel = self.imp().selection.borrow();
+        let s = sel.as_ref()?;
+        let first = s.strokes.first()?;
+        let highlighter = s.strokes.iter().all(|st| st.tool() == Tool::Highlighter);
+        Some((first.color(), highlighter))
+    }
+
     pub fn copy_selection(&self) -> bool {
         let sel = self.imp().selection.borrow();
         let Some(s) = sel.as_ref() else {

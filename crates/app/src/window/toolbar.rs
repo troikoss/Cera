@@ -2,7 +2,8 @@
 //! The floating tool bar (DESIGN.md §9): tools, colour swatches, size slots, undo and redo
 //! (the lasso's actions are in the canvas's context menu, `show_context_menu`). Which window
 //! edge it sits on and how many swatches and size slots it shows are preferences; the
-//! eraser has size slots but no swatches. Tapping the active pen again opens its pressure
+//! eraser has size slots but no swatches, the lasso neither (Change style in the context
+//! menu recolours a selection). Tapping the active pen again opens its pressure
 //! setting, the active lasso its shape (free loop or rectangle); tapping the selected swatch
 //! again opens the palette and colour wheel for that slot, the selected size slot a slider.
 //! Tool settings and slots are saved in the app settings.
@@ -172,20 +173,9 @@ impl CeraWindow {
                 self,
                 move |b| {
                     let tools = &win.imp().tool_state;
-                    if b.is_active() && tools.tool.get() != ToolKind::Lasso {
+                    if b.is_active() {
                         tools.set_color(win.palette()[slot]);
                         win.update_size_dots();
-                    }
-                }
-            ));
-            button.connect_clicked(glib::clone!(
-                #[weak(rename_to = win)]
-                self,
-                move |_| {
-                    if win.imp().tool_state.tool.get() == ToolKind::Lasso
-                        && let Some(canvas) = win.canvas()
-                    {
-                        canvas.recolour_selection(win.palette()[slot]);
                     }
                 }
             ));
@@ -194,12 +184,7 @@ impl CeraWindow {
                 glib::clone!(
                     #[weak(rename_to = win)]
                     self,
-                    move |b| {
-                        // With the lasso a tap recolours the selection instead.
-                        if win.imp().tool_state.tool.get() != ToolKind::Lasso {
-                            win.show_palette(slot, b);
-                        }
-                    }
+                    move |b| win.show_palette(slot, b)
                 ),
             );
             imp.swatch_box.append(&button);
@@ -285,16 +270,13 @@ impl CeraWindow {
         let tool = imp.tool_state.tool.get();
         let palette = self.palette();
         let current = imp.tool_state.color();
-        let selection = self.canvas().is_some_and(|c| c.has_selection());
-        imp.swatch_box.set_visible(tool != ToolKind::Eraser);
+        let coloured = matches!(tool, ToolKind::Pen | ToolKind::Highlighter);
+        imp.swatch_box.set_visible(coloured);
+        // The lasso has neither swatches nor sizes: one separator is enough.
+        imp.swatch_separator.set_visible(tool != ToolKind::Lasso);
         for (i, (button, swatch)) in imp.swatches.borrow().iter().enumerate() {
             swatch.set_color(rgba(palette[i]));
-            button.set_sensitive(tool != ToolKind::Lasso || selection);
-            button.set_tooltip_text(Some(if tool == ToolKind::Lasso {
-                "Recolour the selection"
-            } else {
-                "Colour (tap again for more)"
-            }));
+            button.set_tooltip_text(Some("Colour (tap again for more)"));
             button.set_active(palette[i] == current);
         }
         let sized = tool != ToolKind::Lasso;
@@ -534,8 +516,7 @@ impl CeraWindow {
             wrap.append(&button);
         }
         let alpha = if highlighter { HIGHLIGHTER_ALPHA } else { 255 };
-        // While dragging only the swatch follows; the colour is taken when the finger lifts,
-        // so recolouring a selection is one undo step.
+        // While dragging only the swatch follows; the colour is taken when the finger lifts.
         wheel.connect_changed(glib::clone!(
             #[weak(rename_to = win)]
             self,
@@ -566,14 +547,7 @@ impl CeraWindow {
                 s.pen_colors[slot] = color;
             }
         });
-        let tools = &self.imp().tool_state;
-        if tools.tool.get() == ToolKind::Lasso {
-            if let Some(canvas) = self.canvas() {
-                canvas.recolour_selection(color);
-            }
-        } else {
-            tools.set_color(color);
-        }
+        self.imp().tool_state.set_color(color);
         self.update_toolbar();
     }
 }
@@ -612,6 +586,14 @@ impl CeraWindow {
         }
         menu.append_section(None, &edit);
         if selection {
+            let style = gio::Menu::new();
+            let item = gio::MenuItem::new(Some("Change _Style…"), None);
+            item.set_action_and_target_value(
+                Some("win.change-style"),
+                Some(&(at.0, at.1, source as u32).to_variant()),
+            );
+            style.append_item(&item);
+            menu.append_section(None, &style);
             let arrange = gio::Menu::new();
             for (label, target) in [
                 ("Bring to _Front", "front"),
@@ -659,6 +641,85 @@ impl CeraWindow {
             let m = m.clone();
             glib::idle_add_local_once(move || m.unparent());
         });
+        popover.popup();
+    }
+}
+
+impl CeraWindow {
+    /// The selection's style, for now its colour: presets and a colour wheel at the press
+    /// `at` that opened the context menu. Highlighter strokes keep their translucency.
+    pub(super) fn show_style_popover(&self, at: (f64, f64), source: InputSource) {
+        let Some(canvas) = self.canvas() else { return };
+        let Some((current, highlighter)) = canvas.selection_style() else {
+            return;
+        };
+        let presets: &[Rgba8] = if highlighter {
+            &HIGHLIGHTER_COLORS
+        } else {
+            &PEN_PRESETS
+        };
+        let wrap = adw::WrapBox::builder()
+            .child_spacing(6)
+            .line_spacing(6)
+            .natural_line_length(6 * 46)
+            .justify(adw::JustifyMode::Spread)
+            .build();
+        let content = popover_box(gtk::Orientation::Vertical);
+        content.append(&wrap);
+        let wheel = ColorWheel::new(Rgba8 { a: 255, ..current });
+        content.append(&wheel);
+
+        let anchor = &*self.imp().note_overlay;
+        let Some(origin) =
+            canvas.compute_point(anchor, &gtk::graphene::Point::new(at.0 as f32, at.1 as f32))
+        else {
+            return;
+        };
+        let popover = gtk::Popover::builder()
+            .child(&content)
+            .position(if source == InputSource::Mouse {
+                gtk::PositionType::Bottom
+            } else {
+                gtk::PositionType::Top
+            })
+            .build();
+        popover.set_parent(anchor);
+        popover.set_pointing_to(Some(&gdk::Rectangle::new(
+            origin.x() as i32,
+            origin.y() as i32,
+            1,
+            1,
+        )));
+        popover.connect_closed(|p| {
+            let p = p.clone();
+            glib::idle_add_local_once(move || p.unparent());
+        });
+        for &color in presets {
+            let button = gtk::Button::builder()
+                .child(&Swatch::new(rgba(color)))
+                .css_classes(["flat", "circular"])
+                .width_request(40)
+                .height_request(40)
+                .build();
+            button.connect_clicked(glib::clone!(
+                #[weak]
+                canvas,
+                #[weak]
+                popover,
+                move |_| {
+                    canvas.recolour_selection(color);
+                    popover.popdown();
+                }
+            ));
+            wrap.append(&button);
+        }
+        // Taken when the finger lifts, so each pick is one undo step and the selection's
+        // texture is redrawn once, not on every motion.
+        wheel.connect_picked(glib::clone!(
+            #[weak]
+            canvas,
+            move |w| canvas.recolour_selection(w.color())
+        ));
         popover.popup();
     }
 }

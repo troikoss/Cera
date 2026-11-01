@@ -231,7 +231,7 @@
                                       </object>
                                     </child>
                                     <child>
-                                      <object class="GtkSeparator">
+                                      <object class="GtkSeparator" id="swatch_separator">
                                         <property name="orientation">vertical</property>
                                       </object>
                                     </child>

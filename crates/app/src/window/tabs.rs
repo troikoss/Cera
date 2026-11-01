@@ -373,6 +373,7 @@ impl CeraWindow {
             ("delete-selection", selection),
             ("select-none", selection),
             ("arrange", selection),
+            ("change-style", selection),
             ("paste", has_note && crate::canvas::has_clipboard()),
             ("paste-at", has_note && crate::canvas::has_clipboard()),
         ] {

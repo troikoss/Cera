@@ -71,6 +71,8 @@ mod imp {
         #[template_child]
         pub swatch_box: TemplateChild<gtk::Box>,
         #[template_child]
+        pub swatch_separator: TemplateChild<gtk::Separator>,
+        #[template_child]
         pub size_separator: TemplateChild<gtk::Separator>,
         #[template_child]
         pub size_box: TemplateChild<gtk::Box>,
@@ -248,6 +250,14 @@ impl CeraWindow {
                 }
             })
             .build();
+        let change_style = gio::ActionEntry::builder("change-style")
+            .parameter_type(Some(glib::VariantTy::new("(ddu)").expect("valid type")))
+            .activate(|win: &Self, _, param| {
+                if let Some((x, y, source)) = param.and_then(|p| p.get::<(f64, f64, u32)>()) {
+                    win.show_style_popover((x, y), crate::canvas::InputSource::from_u32(source));
+                }
+            })
+            .build();
         let arrange = gio::ActionEntry::builder("arrange")
             .parameter_type(Some(glib::VariantTy::STRING))
             .activate(|win: &Self, _, param| {
@@ -311,6 +321,7 @@ impl CeraWindow {
             canvas_action("zoom-fit", Canvas::zoom_fit_width),
             tool,
             arrange,
+            change_style,
         ]);
         self.update_note_actions();
     }

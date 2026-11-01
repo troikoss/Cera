@@ -342,16 +342,16 @@ AdwApplicationWindow
             ├─ GtkScrolledWindow > Canvas
             └─ floating pill (bottom centre):
                AdwToggleGroup [pen | highlighter | eraser | lasso] │ 1–6 colour swatches
-               │ 1–5 size slots (pen, highlighter, eraser) │ [add page]
+               (pen, highlighter) │ 1–5 size slots (pen, highlighter, eraser) │ [undo] [redo]
 ```
 
 - **Tools:** tap the active pen again → pressure toggle; the active lasso → loop, rectangle, stroke or add space.
   Tap the selected swatch again → palette (`AdwWrapBox`) + an HSV colour wheel drawn from
   gradient nodes (`wheel.rs`); the selected size slot → width slider. How many swatches and
   size slots show is a preference. The eraser has size slots (radius in logical px, also used
-  by the stylus's eraser end and barrel) and no swatches. With the lasso, the swatches recolour the selection; cut, copy,
-  paste, delete, arrange, undo and redo are in a context menu (`GtkPopoverMenu`, built per
-  opening; cut, copy, delete and arrange only on the selection, Paste greyed out with nothing
+  by the stylus's eraser end and barrel) and no swatches; the lasso has neither. Cut, copy,
+  paste, delete, change style, arrange, undo and redo are in a context menu (`GtkPopoverMenu`,
+  built per opening; cut, copy, delete, change style and arrange only on the selection, Paste greyed out with nothing
   to paste). It opens with any tool, per input: the **mouse** right-clicks anywhere (a compact
   menu below the pointer; left clicks never open it); the **stylus**, or a drawing finger,
   holds still for 500 ms anywhere (the dot, loop or erase it began is dropped) or, with the
@@ -361,7 +361,10 @@ AdwApplicationWindow
   item: a `GtkModelButton` claims a touch on press, which cancels the scrolled window's
   kinetic drag, so each item's click gesture is swapped for one that activates on release;
   palm rejection leaves touches on popovers alone. Opened away from the selection, Paste pastes centred on
-  that point. Tool settings and slots are app settings
+  that point. Change style opens a popover at the press with the selection's style, for now
+  only its colour: presets (the highlighter's when the selection is all highlighter ink) and
+  the colour wheel. Highlighter strokes keep their translucency; each pick is one undo step
+  and redraws the selection's texture once. Tool settings and slots are app settings
   (`~/.config/cera/settings.json`). Tool popovers hang off the tool bar box, not the
   `AdwToggleGroup`, which hides children it doesn't know about when they take focus.
 - **Pages button:** `AdwDialog` (a bottom sheet when narrow) with a `GtkGridView` of page
