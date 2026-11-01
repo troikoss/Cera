@@ -60,7 +60,9 @@ assists" add-on in ROADMAP.md, because they change how you draw, not how a strok
 - **Pattern:** solid, dashed or dotted, with one spacing slider in multiples of the stroke
   width. The spacing sets the gap, and also the dash length for dashed lines. A dot is a stamp
   of the tip shape.
-- **Opacity:** a stroke never darkens itself (it is one fill). Separate strokes do stack.
+- **Opacity:** highlighters only; ink is always opaque and its opacity row is greyed out
+  (changed after M8 landed). A stroke never darkens itself (it is one fill). Separate strokes
+  do stack.
 - **Straight line (add-on, later):** a preset option that draws from pen-down to the current
   point. Snapping is a separate option with a configurable angle step (15°, 30°, 45° or 90°),
   with a ±5° tolerance. These go on the ROADMAP under "Handwriting assists"; this plan only

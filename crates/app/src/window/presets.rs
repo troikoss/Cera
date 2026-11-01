@@ -107,6 +107,7 @@ pub(super) fn preset_editor(id: PresetId) -> gtk::Box {
     general.add(&kind);
 
     let stroke = adw::PreferencesGroup::builder().title("Stroke").build();
+    let stroke_group = stroke.clone();
     let pressure = adw::SwitchRow::builder()
         .title("Pressure")
         .subtitle("The width follows how hard you press")
@@ -140,10 +141,15 @@ pub(super) fn preset_editor(id: PresetId) -> gtk::Box {
     stroke.add(&opacity);
     stroke.add(&tip);
 
-    stroke.set_sensitive(!preset.role.is_eraser());
+    // An eraser uses none of these; ink is always opaque.
+    let sensitive = move |role: Role| {
+        stroke.set_sensitive(!role.is_eraser());
+        opacity.set_sensitive(role == Role::Highlighter);
+    };
+    sensitive(preset.role);
     kind.connect_selected_notify(glib::clone!(
-        #[weak]
-        stroke,
+        #[strong]
+        sensitive,
         move |row| {
             let role = match row.selected() {
                 0 => Role::Ink,
@@ -152,13 +158,13 @@ pub(super) fn preset_editor(id: PresetId) -> gtk::Box {
                     mode: EraserMode::Stroke,
                 },
             };
-            stroke.set_sensitive(!role.is_eraser());
+            sensitive(role);
             edit(id, true, |p| p.set_role(role));
         }
     ));
 
     content.append(&general);
-    content.append(&stroke);
+    content.append(&stroke_group);
     content
 }
 

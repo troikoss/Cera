@@ -157,7 +157,8 @@ pub struct Preset {
     /// The current colour (opaque) and width.
     pub color: Rgba8,
     pub width: f32,
-    /// `0.0..=1.0`; a stroke never darkens itself, separate strokes stack.
+    /// `0.0..=1.0`; a stroke never darkens itself, separate strokes stack. Highlighters
+    /// only: ink is always opaque.
     pub opacity: f32,
     /// The width follows the stylus pressure; off, every sample counts as full pressure.
     pub pressure: bool,
@@ -220,12 +221,20 @@ impl Preset {
         ]
     }
 
-    /// The colour strokes are drawn in: the current colour at the preset's opacity.
+    /// Whether the preset's opacity is used: only highlighters are translucent.
+    pub fn has_opacity(&self) -> bool {
+        self.role == Role::Highlighter
+    }
+
+    /// The colour strokes are drawn in: the current colour, at the preset's opacity for a
+    /// highlighter.
     pub fn ink_color(&self) -> Rgba8 {
-        Rgba8 {
-            a: (self.opacity.clamp(0.0, 1.0) * 255.0).round() as u8,
-            ..self.color
-        }
+        let a = if self.has_opacity() {
+            (self.opacity.clamp(0.0, 1.0) * 255.0).round() as u8
+        } else {
+            255
+        };
+        Rgba8 { a, ..self.color }
     }
 
     pub fn stroke_style(&self) -> StrokeStyle {
@@ -310,6 +319,11 @@ mod tests {
         assert_eq!((style.layer, style.roundness), (Layer::Over, 0));
         assert!(!h.pressure);
         assert_eq!(presets[0].stroke_style(), StrokeStyle::PEN);
+        let faint_pen = Preset {
+            opacity: 0.3,
+            ..presets[0].clone()
+        };
+        assert_eq!(faint_pen.ink_color().a, 255, "ink is always opaque");
     }
 
     #[test]

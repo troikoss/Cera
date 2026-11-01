@@ -379,7 +379,7 @@ AdwApplicationWindow
   settings; docs/tool-presets.md) plus the lasso: each preset button shows its kind's icon with
   a dot in its current colour; 1–9 pick favourites, L the lasso. A preset is ink, a
   highlighter (drawn over the ink; square tip by default) or an eraser, with its own swatches, size slots,
-  opacity, pressure switch and tip roundness. Tap the active preset again → its options
+  opacity (highlighters only; ink is opaque), pressure switch and tip roundness. Tap the active preset again → its options
   (`window/presets.rs`, the same editor as Preferences → Tools, which lists, stars,
   duplicates, deletes and adds presets and picks the stylus's secondary action); the active
   lasso → loop, rectangle, stroke or add space.

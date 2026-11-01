@@ -230,7 +230,7 @@ lines follow in M9.
 - [x] Presets in the settings (settings version 2, migration from the per-tool fields)
 - [x] Tool bar built from the favourite presets plus the lasso; 1–9 pick favourites, L the lasso
 - [x] Preset popover on a tap of the active preset (name, kind, pressure,
-      opacity, tip; "Manage presets…"). Swatches and sizes stay in the tool bar only
+      opacity for highlighters only, tip; "Manage presets…"). Swatches and sizes stay in the tool bar only
 - [x] Tools page in Preferences: list, favourite, secondary action (a drop-down), edit,
       duplicate, delete, add, restore defaults
 - [x] The stylus's eraser end and barrel use the secondary preset (or the lasso)
