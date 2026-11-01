@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Cera: stylus-first handwritten notes for Linux tablets.
 
 mod application;
@@ -28,6 +29,7 @@ fn main() -> glib::ExitCode {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting");
 
     gio::resources_register_include!("cera.gresource").expect("embedded GResource is valid");
+    gtk::Window::set_default_icon_name(APP_ID);
 
     CeraApplication::new().run()
 }

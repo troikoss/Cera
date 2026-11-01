@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Reading PDFs with Poppler.
 
 /// What import needs from a PDF.

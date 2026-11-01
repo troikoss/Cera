@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Opening, saving and compacting `.cera` files.
 //!
 //! - **Open** maps the file, reads the footer and manifest, and nothing else; page ink is

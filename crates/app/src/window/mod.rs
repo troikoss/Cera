@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The main window: vault sidebar, one tab per open note, and the floating tool bar.
 //!
 //! - `mod.rs`: widgets, actions and keyboard shortcuts.
@@ -5,8 +6,10 @@
 //! - `tabs.rs`: notes in tabs: opening, autosave, closing, restoring the workspace.
 //! - `files.rs`: the vault: opening one; creating, renaming, moving, trashing and importing.
 //! - `pages.rs`: the page sorter.
+//! - `export.rs`: PDF and PNG export.
 //! - `prefs.rs`: preferences and the shortcuts list.
 
+mod export;
 mod files;
 mod pages;
 mod prefs;
@@ -267,6 +270,8 @@ impl CeraWindow {
             simple("pages", Self::show_pages),
             simple("preferences", Self::show_preferences),
             simple("shortcuts", Self::show_shortcuts),
+            simple("export-pdf", |win| win.export(export::Format::Pdf)),
+            simple("export-png", |win| win.export(export::Format::Png)),
             canvas_action("zoom-in", |c| c.zoom_step(1)),
             canvas_action("zoom-out", |c| c.zoom_step(-1)),
             canvas_action("zoom-fit", Canvas::zoom_fit_width),

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /// Axis-aligned rectangle in page points; `x0 <= x1` and `y0 <= y1`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {

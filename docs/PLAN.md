@@ -8,8 +8,9 @@ tablet; the next milestone starts after your feedback. Each milestone ends with 
 can run, plus a short "test on the tablet" list.
 
 **Status:** M0–M3 done and tested on the tablet. M4 implemented; the scripted demo runs on the
-tablet, waiting for your stylus test. M5 and M6 implemented, waiting for your test. Still to
-record: the M1 stylus log and renderer choice.
+tablet, waiting for your stylus test. M5–M7 implemented and their tests pass on the tablet;
+waiting for your hands-on test. Still to record: the M1 stylus log and renderer choice. The
+Flatpak manifest is written but not yet built (no flatpak-builder here).
 
 ## M0 — Skeleton
 
@@ -167,11 +168,22 @@ finger" and write, then pinch.
 
 ## M7 — Export and packaging
 
-- [ ] Vector PDF export: cairo `PdfSurface`, Poppler `render_for_printing`, strokes as paths
-- [ ] PNG export of the current page
-- [ ] Flatpak manifest (GNOME runtime) for x86_64 and aarch64
-- [ ] `.desktop` file, AppStream metainfo, MIME type for `.cera`, app icon
-- [ ] Licence headers / `COPYING` (GPL-3.0-or-later)
+- [x] Vector PDF export: cairo `PdfSurface`, Poppler `render_for_printing`, strokes as paths
+      (main menu or Ctrl+E; `cera-cli export`)
+- [x] PNG export of the current page at 216 dpi (Ctrl+Shift+E; `cera-cli png`)
+- [x] Flatpak manifest (GNOME 50 runtime, Poppler built in) for x86_64 and aarch64:
+      `build-aux/io.github.troikoss.Cera.yml`
+- [x] `.desktop` file, AppStream metainfo, MIME type for `.cera`, app icon; `build-aux/install.sh`
+      installs them with the binary into `~/.local` (or `PREFIX`)
+- [x] Licence headers (SPDX) / `COPYING` (GPL-3.0-or-later), README
+
+On the tablet (2026-11-01): exporting the 324-page note with the M2 scribble ink (6 MiB of
+strokes) takes 11 s at 74 MiB peak RSS and writes 50 MiB; the same PDF without ink exports in
+about 1 s at its original size. Ink costs ~35 bytes per sample in the PDF (exact pen outlines
+as discs and hulls).
+
+**Test on the tablet:** export a written-on PDF note and open it in Papers; export a page as
+PNG; `build-aux/install.sh` and start Cera from the app grid; open a `.cera` from Files.
 
 ## Later
 

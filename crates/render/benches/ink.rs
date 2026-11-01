@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! `cargo bench -p cera-render`: pen geometry, an ink tile with 500 strokes, and the linear
 //! stroke scan that stands in for an R-tree (DESIGN.md §5).
 

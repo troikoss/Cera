@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Container layout of a `.cera` file (DESIGN.md §7).
 //!
 //! ```text

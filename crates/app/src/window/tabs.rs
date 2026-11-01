@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Notes in tabs (DESIGN.md §9). Each tab is a scrolled window around a canvas showing one
 //! note. Only the selected tab renders; hidden ones drop their tiles. Every note autosaves
 //! 2 s after its last edit, and when its tab closes.
@@ -339,6 +340,8 @@ impl CeraWindow {
             ("zoom-fit", has_note),
             ("close-tab", has_note),
             ("pages", has_note),
+            ("export-pdf", has_note),
+            ("export-png", has_note),
             ("add-page", has_note),
             ("cut", selection),
             ("copy", selection),

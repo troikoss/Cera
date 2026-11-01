@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The floating tool bar (DESIGN.md §9): tools, three colour swatches, the lasso's actions
 //! and "add page". Tapping the active pen or highlighter again opens its width and pressure
 //! settings; a long press (or right click) on a swatch opens the palette for that slot.

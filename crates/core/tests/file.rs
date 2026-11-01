@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Save/open round-trips, crash recovery and compaction on real files.
 
 use std::fs::{self, OpenOptions};

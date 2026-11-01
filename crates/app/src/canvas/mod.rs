@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The note canvas: pages stacked vertically inside a `GtkScrolledWindow`, drawn from cached
 //! tile textures (DESIGN.md §5). Implements `GtkScrollable`.
 //!

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Finger gestures on the note area (DESIGN.md §6), after palm rejection has had its say:
 //!
 //! - A quick tap with two fingers undoes, with three redoes (setting "Undo with two fingers").

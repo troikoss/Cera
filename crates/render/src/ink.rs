@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Stroke geometry and drawing. The render workers (finished ink tiles) and the canvas (wet
 //! ink while writing) both draw with these functions, so the stroke doesn't change when the
 //! finished tile replaces the wet one.

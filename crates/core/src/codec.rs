@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! `PageInk` chunk payload: a page's strokes as varints.
 //!
 //! ```text

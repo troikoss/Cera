@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Wet ink: the stroke being drawn, rasterised as it grows (DESIGN.md §5).
 //!
 //! It uses the same tile grid as the finished ink tiles. Each motion event clears the small

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! `cera-cli`: a command-line testing aid for `.cera` files.
 
 use std::path::Path;
@@ -15,7 +16,10 @@ commands:
   import <pdf> <out.cera>      convert a PDF into a note
   info <file.cera>             print pages, assets and file stats
   compact <file.cera>          rewrite the file without dead bytes
-  scribble <file.cera> [n]     add n test strokes (default 20) to every page and save";
+  scribble <file.cera> [n]     add n test strokes (default 20) to every page and save
+  export <file.cera> <out.pdf> write the note as a vector PDF
+  png <file.cera> <page> <out.png> [scale]
+                               write one page (1-based) as a PNG, scale px per pt (default 2)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -29,6 +33,9 @@ fn main() -> ExitCode {
             Ok(n) => scribble(Path::new(file), n),
             Err(_) => Err(anyhow::anyhow!("not a stroke count: {n}")),
         },
+        ["export", file, out] => export(Path::new(file), Path::new(out)),
+        ["png", file, page, out] => png(Path::new(file), page, Path::new(out), "2"),
+        ["png", file, page, out, scale] => png(Path::new(file), page, Path::new(out), scale),
         ["-h" | "--help"] => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -219,4 +226,38 @@ fn size(bytes: u64) -> String {
     } else {
         format!("{v:.1} {}", UNITS[unit])
     }
+}
+
+fn export(file: &Path, out: &Path) -> Result<()> {
+    let started = Instant::now();
+    let (note, mut doc) =
+        NoteFile::open(file).with_context(|| format!("opening {}", file.display()))?;
+    let pages = cera_render::export::note_pages(&mut doc)?;
+    let assets = cera_render::export::note_assets(&note);
+    cera_render::export::export_pdf(out, &pages, &assets)
+        .with_context(|| format!("writing {}", out.display()))?;
+    println!(
+        "exported {} pages to {} ({}) in {:.0?}",
+        pages.len(),
+        out.display(),
+        size(std::fs::metadata(out)?.len()),
+        started.elapsed()
+    );
+    Ok(())
+}
+
+fn png(file: &Path, page: &str, out: &Path, scale: &str) -> Result<()> {
+    let page: usize = page.parse().context("page must be a number")?;
+    let scale: f64 = scale.parse().context("scale must be a number")?;
+    let (note, mut doc) =
+        NoteFile::open(file).with_context(|| format!("opening {}", file.display()))?;
+    if page == 0 || page > doc.page_count() {
+        bail!("the note has pages 1 to {}", doc.page_count());
+    }
+    let pages = cera_render::export::note_pages(&mut doc)?;
+    let assets = cera_render::export::note_assets(&note);
+    cera_render::export::export_png(out, &pages[page - 1], &assets, scale)
+        .with_context(|| format!("writing {}", out.display()))?;
+    println!("wrote page {page} to {}", out.display());
+    Ok(())
 }

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Cera
+GenericName=Handwritten Notes
+Comment=Write notes by hand and annotate PDFs
+Exec=cera %F
+Icon=io.github.troikoss.Cera
+Terminal=false
+Type=Application
+Categories=Office;
+Keywords=notes;handwriting;stylus;pen;tablet;pdf;annotate;sketch;
+MimeType=application/x-cera;application/pdf;
+StartupNotify=true
+X-Purism-FormFactor=Workstation;Mobile;

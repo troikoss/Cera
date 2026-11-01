@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Tile textures with a byte budget, evicting the least recently drawn first.
 //!
 //! Ink tiles carry the page's ink generation they were drawn for. An edit marks the tiles it

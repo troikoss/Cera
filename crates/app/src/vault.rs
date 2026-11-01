@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Vaults (DESIGN.md §8): any folder of notes, with per-vault state in a hidden `.cera/` folder
 //! (like Obsidian's `.obsidian/`). No GTK here, so it is unit-tested.
 //!

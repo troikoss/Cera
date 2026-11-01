@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Small dialogs: importing a PDF, picking a folder, asking for a name.
 
 use std::cell::RefCell;

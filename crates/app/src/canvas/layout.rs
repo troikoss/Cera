@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Where pages sit: a vertical stack in points, centred, scaled linearly by the zoom.
 //!
 //! View coordinates are logical pixels relative to the canvas widget:

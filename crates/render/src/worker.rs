@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Render worker threads: tile jobs in, pixel buffers out.
 //!
 //! The canvas replaces the whole job queue whenever the viewport changes (visible tiles first,

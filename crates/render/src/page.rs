@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Whole pages in page points: paper, PDF background and ink, back to front. Used for page
 //! thumbnails and for export; the canvas draws paper with GTK nodes and the rest as tiles,
 //! with the same geometry.

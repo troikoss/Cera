@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! App-wide settings in `~/.config/cera/settings.json`: tool presets, touch gestures and the
 //! tile cache budget. Per-vault settings (paper for new notes) live in the vault instead.
 

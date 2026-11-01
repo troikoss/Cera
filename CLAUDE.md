@@ -28,14 +28,15 @@ Claude implements one milestone at a time; the user reviews the code and tests o
 Keep changes reviewable: small modules, focused commits, and end each milestone with a short
 "test on the tablet" list. Don't start the next milestone until the user gives feedback.
 
-## Layout (planned, from M0)
+## Layout
 
 ```
 crates/core     model, .cera format, geometry, stroke outlines, undo — no GTK, fully unit-tested
 crates/render   cairo + Poppler tile rasteriser and render worker thread — no widgets
 crates/app      GTK/libadwaita UI: window, vault sidebar, canvas widget, input
-crates/cli      cera-cli: import / info / compact (testing aid)
+crates/cli      cera-cli: import / info / compact / export / png (testing aid)
 docs/           DESIGN.md, PLAN.md
+build-aux/      install.sh, Flatpak manifest (desktop file, metainfo, icons live in crates/app/data)
 ```
 
 Keep GTK types out of `core`. Poppler objects aren't `Send`: each render worker opens its own
@@ -63,7 +64,14 @@ cargo run -p cera --release --example stylus             # M1 stylus spike (see 
 CERA_DEBUG_DEMO=1 cargo run -p cera -- file.cera          # scripted draw/erase/undo
 cargo bench -p cera-render                               # ink geometry benchmarks
 GSK_RENDERER=gl cargo run -p cera                        # compare renderers (gl, vulkan, cairo)
+cargo run -p cera-cli -- export note.cera out.pdf        # also: png, import, info, compact
+cargo build --release -p cera && build-aux/install.sh    # install into ~/.local
+flatpak-builder --user --install --force-clean build-dir build-aux/io.github.troikoss.Cera.yml
 ```
+
+UI checks without a stylus or a display of your own: run `gtk4-broadwayd :5`, start the app with
+`GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 GDK_DEBUG=no-portals` and open `http://localhost:8085`.
+With `CERA_DEBUG=1`, window actions can be run over D-Bus (`app.win`, see `application.rs`).
 
 All four of fmt, clippy, test and a successful build must pass before a commit.
 

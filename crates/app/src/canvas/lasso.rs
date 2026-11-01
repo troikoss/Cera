@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Lasso selection (DESIGN.md §9): draw a loop on a page to select the strokes mostly inside
 //! it, then drag to move them, or delete, recolour, cut, copy and paste (also into other
 //! notes).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gio, glib};
@@ -122,6 +123,8 @@ impl CeraApplication {
         self.set_accels_for_action("win.zoom-fit", &["<Control>0"]);
         self.set_accels_for_action("win.preferences", &["<Control>comma"]);
         self.set_accels_for_action("win.shortcuts", &["<Control>question"]);
+        self.set_accels_for_action("win.export-pdf", &["<Control>e"]);
+        self.set_accels_for_action("win.export-png", &["<Control><Shift>e"]);
         // Tools, undo and the clipboard are in the window's bubble-phase shortcuts, so text
         // fields keep those keys.
     }

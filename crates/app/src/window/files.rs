@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The vault (DESIGN.md §8): opening one, and the file operations behind the sidebar's
 //! menus: new note and folder, rename, move, trash, drop and PDF import.
 

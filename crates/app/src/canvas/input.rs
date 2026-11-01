@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Drawing input (DESIGN.md §6). The stylus draws with the selected tool; its eraser end and
 //! barrel button erase. The mouse draws at a fixed pressure and pans with the middle button.
 //! Touch is left to the scrolled window (pan) and the pinch gesture.

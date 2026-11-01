@@ -71,7 +71,7 @@ cera/                   Cargo workspace
 ├─ crates/core          no GTK. Model, file format, geometry, stroke outlines, undo.
 ├─ crates/render        cairo + Poppler tile rasteriser and worker thread. No widgets.
 ├─ crates/app           GTK/libadwaita UI: window, vault sidebar, canvas widget, input.
-└─ crates/cli           cera-cli: import / info / compact / render-page (testing aid)
+└─ crates/cli           cera-cli: import / info / compact / export / png / scribble (testing aid)
 ```
 
 `core` is pure Rust so the format, geometry and undo logic are unit-testable and fuzzable
@@ -268,6 +268,18 @@ Code: `crates/core/src/format.rs` (layout), `codec.rs` (strokes), `file.rs` (ope
 4. Options in the import dialog: name, destination folder, page range, keep or trash the original.
 
 Deleting or reordering pages only edits the manifest; unused assets are dropped on compaction.
+
+### Export
+
+Code: `crates/render/src/export.rs`, `page.rs`. The main thread collects every page's spec and
+`Arc`-shared strokes (decoding ink not loaded yet) and a worker thread draws them:
+
+- **PDF:** one cairo `PdfSurface` page per note page at its own size: paper as rectangles,
+  the background through Poppler's `render_for_printing`, ink as the same filled paths the
+  tiles use. Everything stays vector. Ink costs ~35 bytes per sample after compression.
+- **PNG:** the current page at 3 px/pt (216 dpi).
+- Both write a hidden temp file next to the target and rename it over, so a failed export
+  leaves nothing half-written.
 
 ## 8. Vault
 

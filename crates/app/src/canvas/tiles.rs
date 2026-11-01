@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Asking the render workers for tiles, and drawing a frame from the cache.
 //!
 //! Per page, back to front: paper (colour nodes), PDF tiles, ink tiles, wet ink, and the

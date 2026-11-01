@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-cera">
+    <comment>Cera note</comment>
+    <generic-icon name="x-office-document"/>
+    <glob pattern="*.cera"/>
+    <magic priority="80">
+      <match type="string" value="CERANOTE" offset="0"/>
+    </magic>
+  </mime-type>
+</mime-info>

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Preferences (paper for new notes in this vault, touch gestures, tile cache) and the
 //! keyboard shortcuts list.
 
@@ -192,6 +193,8 @@ impl CeraWindow {
                     ("Zoom out", "<Control>minus"),
                     ("Fit width", "<Control>0"),
                     ("Pages", "<Control>p"),
+                    ("Export as PDF", "<Control>e"),
+                    ("Export page as PNG", "<Control><Shift>e"),
                     ("Add page", "<Control>Return"),
                 ],
             ),

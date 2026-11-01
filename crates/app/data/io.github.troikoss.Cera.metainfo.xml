@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.troikoss.Cera</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Cera</name>
+  <summary>Write notes by hand and annotate PDFs</summary>
+  <developer id="io.github.troikoss">
+    <name>troikoss</name>
+  </developer>
+  <description>
+    <p>
+      Cera is a light handwritten-notes app for Linux tablets with a stylus. Notes live as
+      files in a folder of your choice, and PDFs become notes you can write on.
+    </p>
+    <ul>
+      <li>Pressure-sensitive pen, highlighter, stroke eraser and lasso</li>
+      <li>Import PDFs and write over their pages; export back to PDF</li>
+      <li>A vault of folders and notes in the sidebar, with tabs</li>
+      <li>Ruled, grid and dotted paper; reorder, insert and delete pages</li>
+      <li>Palm rejection, pinch zoom and finger gestures</li>
+      <li>Small memory footprint and crash-safe autosave</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.troikoss.Cera.desktop</launchable>
+  <url type="homepage">https://github.com/troikoss/Cera</url>
+  <url type="bugtracker">https://github.com/troikoss/Cera/issues</url>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>cera</binary>
+    <mediatype>application/x-cera</mediatype>
+  </provides>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+    <control>tablet</control>
+  </supports>
+  <categories>
+    <category>Office</category>
+    <category>Education</category>
+  </categories>
+  <keywords>
+    <keyword>notes</keyword>
+    <keyword>handwriting</keyword>
+    <keyword>stylus</keyword>
+    <keyword>pdf</keyword>
+  </keywords>
+  <releases>
+    <release version="0.1.0" date="2026-11-01">
+      <description>
+        <p>First release: inking, vaults with tabs, PDF import and export, page sorter and lasso.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! M1 stylus spike (throwaway, not part of the app).
 //!
 //! Logs what the stylus and touchscreen report and draws raw pressure-width polylines so

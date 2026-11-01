@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! A colour dot for the tool bar's swatch and width buttons: a rounded clip and a colour node.
 
 use std::cell::Cell;

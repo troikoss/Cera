@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Palm rejection (DESIGN.md §6): while the pen is near the screen, and for 500 ms after it was
 //! last seen, new touches are swallowed so a resting hand neither scrolls nor zooms.
 //!

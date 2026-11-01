@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The page sorter (DESIGN.md §9): a grid of page thumbnails to reorder pages, insert blank
 //! ones, delete them or change their paper. Every change goes through the note's history, so
 //! it undoes like any other edit.

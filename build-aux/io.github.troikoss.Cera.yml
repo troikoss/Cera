@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Flatpak manifest, for x86_64 and aarch64 alike. Build and install locally with:
+#
+#   flatpak install flathub org.gnome.Sdk//50 org.freedesktop.Sdk.Extension.rust-stable
+#   flatpak-builder --user --install --force-clean build-dir build-aux/io.github.troikoss.Cera.yml
+#
+# Cargo downloads crates during the build (--share=network), which local builds allow. A
+# Flathub submission would vendor them instead (flatpak-cargo-generator.py → cargo-sources.json).
+id: io.github.troikoss.Cera
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: cera
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  # Vaults are ordinary folders, anywhere in the home directory.
+  - --filesystem=home
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+cleanup:
+  - /include
+  - /lib/cmake
+  - /lib/pkgconfig
+  - /share/man
+  - '*.a'
+modules:
+  # The GNOME runtime has no Poppler; only poppler-glib is needed.
+  - name: poppler
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DENABLE_GLIB=ON
+      - -DENABLE_CPP=OFF
+      - -DENABLE_QT5=OFF
+      - -DENABLE_QT6=OFF
+      - -DENABLE_UTILS=OFF
+      - -DENABLE_BOOST=OFF
+      - -DENABLE_NSS3=OFF
+      - -DENABLE_GPGME=OFF
+      - -DENABLE_LIBCURL=OFF
+      - -DENABLE_LIBOPENJPEG=none
+      - -DENABLE_GOBJECT_INTROSPECTION=OFF
+      - -DBUILD_GTK_TESTS=OFF
+      - -DBUILD_CPP_TESTS=OFF
+      - -DBUILD_MANUAL_TESTS=OFF
+      - -DBUILD_QT5_TESTS=OFF
+      - -DBUILD_QT6_TESTS=OFF
+    sources:
+      - type: git
+        url: https://gitlab.freedesktop.org/poppler/poppler.git
+        tag: poppler-26.01.0
+  - name: cera
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+      env:
+        CARGO_HOME: /run/build/cera/cargo
+    build-commands:
+      - cargo build --release --locked -p cera
+      - PREFIX=/app build-aux/install.sh
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - target
+          - build-dir
+          - .flatpak-builder

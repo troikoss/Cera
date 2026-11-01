@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Tile keys and grid maths, shared by the render worker and the canvas.
 //!
 //! A page at a given scale is a pixel grid cut into 256 × 256 tiles (edge tiles are smaller).

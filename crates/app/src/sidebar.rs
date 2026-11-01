@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The vault sidebar (DESIGN.md §8): the folder tree, filename search and file actions.
 //!
 //! The tree is GTK's own models: a monitored `DirectoryList` per folder → `FilterListModel`

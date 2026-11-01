@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The note open in a window: its file, document and undo history, shared by the window
 //! (saving, undo buttons) and the canvas (drawing, erasing).
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! PDF → note conversion (DESIGN.md §7, "PDF import"). Nothing is rasterised: the PDF is
 //! embedded once and each page gets it as its background.
 

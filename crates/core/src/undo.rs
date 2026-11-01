@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Undo/redo as a log of diffs. Strokes are `Arc`-shared, so a removed stroke costs a pointer.
 //!
 //! [`History`] is the only way to edit a [`Document`]'s ink and pages. Commands address

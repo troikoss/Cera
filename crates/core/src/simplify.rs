@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Ramer–Douglas–Peucker simplification of stylus samples before a stroke is stored.
 
 use crate::model::Point;

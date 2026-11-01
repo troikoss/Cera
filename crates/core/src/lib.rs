@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Cera's document model, `.cera` file format, geometry and undo.
 //!
 //! No GTK types live here, so everything is unit-testable without a display.
