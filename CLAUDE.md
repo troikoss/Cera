@@ -66,6 +66,7 @@ CERA_DEBUG_DEMO=1 cargo run -p cera -- file.cera          # scripted draw/erase/
 cargo bench -p cera-render                               # ink geometry benchmarks
 GSK_RENDERER=gl cargo run -p cera                        # compare renderers (gl, vulkan, cairo)
 cargo run -p cera-cli -- export note.cera out.pdf        # also: png, import, info, compact
+tools/rnote2cera.py note.rnote [--pdf book.pdf]          # convert Rnote notes (see its header)
 cargo build --release -p cera && build-aux/install.sh    # install into ~/.local
 flatpak-builder --user --install --force-clean build-dir build-aux/io.github.troikoss.Cera.yml
 ```
