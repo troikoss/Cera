@@ -43,7 +43,12 @@ pub struct Settings {
     /// One finger draws; two fingers scroll and zoom.
     pub draw_with_finger: bool,
     pub tile_budget_mib: u32,
+    /// Colours picked from the wheel or typed in, newest first, shown under the palette.
+    pub recent_colors: Vec<Rgba8>,
 }
+
+/// How many recent colours are kept: one row of the palette.
+pub const MAX_RECENT_COLORS: usize = 6;
 
 /// The per-tool fields of version 1, read once to make the default presets from them.
 #[derive(Deserialize)]
@@ -169,6 +174,7 @@ impl Default for Settings {
             finger_taps: true,
             draw_with_finger: false,
             tile_budget_mib: 128,
+            recent_colors: Vec::new(),
         }
     }
 }
@@ -212,6 +218,15 @@ impl Settings {
         }
         self.color_slots = self.color_slots.clamp(1, MAX_COLOR_SLOTS);
         self.size_slots = self.size_slots.clamp(1, MAX_SIZE_SLOTS);
+        self.recent_colors.truncate(MAX_RECENT_COLORS);
+    }
+
+    /// Puts `color`, made opaque, first among the recent colours.
+    pub fn add_recent_color(&mut self, color: Rgba8) {
+        let color = Rgba8 { a: 255, ..color };
+        self.recent_colors.retain(|&c| c != color);
+        self.recent_colors.insert(0, color);
+        self.recent_colors.truncate(MAX_RECENT_COLORS);
     }
 
     /// The first eraser preset, else the lasso.
@@ -408,5 +423,17 @@ mod tests {
         s.remove_preset(1);
         assert_eq!(s.presets.len(), 1, "the last preset stays");
         assert_eq!(s.next_preset_id, 3, "ids are never reused");
+    }
+
+    #[test]
+    fn recent_colors_are_opaque_unique_and_few() {
+        let mut s = Settings::default();
+        for i in 0..10 {
+            s.add_recent_color(Rgba8::new(i, 0, 0, 100));
+        }
+        s.add_recent_color(Rgba8::new(7, 0, 0, 255));
+        let reds: Vec<u8> = s.recent_colors.iter().map(|c| c.r).collect();
+        assert_eq!(reds, [7, 9, 8, 6, 5, 4]);
+        assert!(s.recent_colors.iter().all(|c| c.a == 255));
     }
 }

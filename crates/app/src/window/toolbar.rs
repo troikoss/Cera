@@ -16,12 +16,12 @@ use adw::subclass::prelude::*;
 use cera_core::{Layer, Rgba8, StrokeStyle};
 use gtk::{gdk, gio, glib};
 
+use super::colors::color_picker;
 use super::{CeraWindow, rgba};
 use crate::canvas::{InputSource, ToolKind};
 use crate::preset::{HIGHLIGHTER_ALPHA, HIGHLIGHTER_COLORS, Preset, PresetId, Role};
 use crate::settings::{self, SelectShape, ToolbarPosition};
 use crate::swatch::Swatch;
-use crate::wheel::ColorWheel;
 
 /// Palette choices: GNOME's palette for ink, tints for highlighters.
 const PEN_PRESETS: [Rgba8; 12] = [
@@ -541,7 +541,7 @@ impl CeraWindow {
         ));
     }
 
-    /// More colours for swatch `slot`, and a colour wheel.
+    /// More colours for swatch `slot`: the palette, recent colours and a colour wheel.
     fn show_palette(&self, slot: usize, anchor: &gtk::ToggleButton) {
         let Some(preset) = self.imp().tool_state.preset() else {
             return;
@@ -551,58 +551,31 @@ impl CeraWindow {
         } else {
             &PEN_PRESETS
         };
-        let wrap = adw::WrapBox::builder()
-            .child_spacing(6)
-            .line_spacing(6)
-            .natural_line_length(6 * 46)
-            .justify(adw::JustifyMode::Spread)
-            .build();
-        let content = popover_box(gtk::Orientation::Vertical);
-        content.append(&wrap);
-        let wheel = ColorWheel::new(preset.colors[slot]);
-        content.append(&wheel);
-        let popover = popup(&content, anchor);
         let id = preset.id;
-        for &color in presets {
-            let button = gtk::Button::builder()
-                .child(&Swatch::new(rgba(color)))
-                .css_classes(["flat", "circular"])
-                .width_request(40)
-                .height_request(40)
-                .build();
-            button.connect_clicked(glib::clone!(
+        let picker = color_picker(
+            presets,
+            preset.colors[slot],
+            true,
+            glib::clone!(
                 #[weak(rename_to = win)]
                 self,
-                #[weak]
-                popover,
-                move |_| {
-                    win.set_palette_slot(id, slot, color);
-                    popover.popdown();
+                move |color| win.set_palette_slot(id, slot, color)
+            ),
+            // Only the tool bar's swatch follows the wheel while it is dragged.
+            glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                move |color| {
+                    if let Some((_, swatch)) = win.imp().swatches.borrow().get(slot) {
+                        swatch.set_color(rgba(color));
+                    }
                 }
-            ));
-            wrap.append(&button);
-        }
-        // While dragging only the swatch follows; the colour is taken when the finger lifts.
-        wheel.connect_changed(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |w| {
-                if let Some((_, swatch)) = win.imp().swatches.borrow().get(slot) {
-                    swatch.set_color(rgba(w.color()));
-                }
-            }
-        ));
-        wheel.connect_picked(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |w| {
-                let color = Rgba8 {
-                    a: 255,
-                    ..w.color()
-                };
-                win.set_palette_slot(id, slot, color);
-            }
-        ));
+            ),
+        );
+        let content = popover_box(gtk::Orientation::Vertical);
+        content.append(&picker.swatches);
+        content.append(&picker.custom);
+        popup(&content, anchor);
     }
 
     fn set_palette_slot(&self, id: PresetId, slot: usize, color: Rgba8) {
@@ -803,44 +776,25 @@ impl CeraWindow {
         content.append(&presets);
         content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
-        // Colour.
+        // Colour, taken when the finger lifts from the wheel, so each pick is one undo step
+        // and the selection's texture is redrawn once, not on every motion.
         let palette: &[Rgba8] = if current.highlights {
             &HIGHLIGHTER_COLORS
         } else {
             &PEN_PRESETS
         };
-        let wrap = adw::WrapBox::builder()
-            .child_spacing(6)
-            .line_spacing(6)
-            .natural_line_length(6 * 46)
-            .justify(adw::JustifyMode::Spread)
-            .build();
-        for &color in palette {
-            let button = gtk::Button::builder()
-                .child(&Swatch::new(rgba(color)))
-                .css_classes(["flat", "circular"])
-                .width_request(40)
-                .height_request(40)
-                .build();
-            button.connect_clicked(glib::clone!(
+        let picker = color_picker(
+            palette,
+            current.color,
+            false,
+            glib::clone!(
                 #[weak]
                 canvas,
-                move |_| canvas.recolour_selection(color)
-            ));
-            wrap.append(&button);
-        }
-        content.append(&wrap);
-        let wheel = ColorWheel::new(Rgba8 {
-            a: 255,
-            ..current.color
-        });
-        // Taken when the finger lifts, so each pick is one undo step and the selection's
-        // texture is redrawn once, not on every motion.
-        wheel.connect_picked(glib::clone!(
-            #[weak]
-            canvas,
-            move |w| canvas.recolour_selection(w.color())
-        ));
+                move |color| canvas.recolour_selection(color)
+            ),
+            |_| {},
+        );
+        content.append(&picker.swatches);
 
         // Type, then width, tip and opacity, each slider applied once it rests.
         let grid = gtk::Grid::builder()
@@ -955,7 +909,7 @@ impl CeraWindow {
         let row = gtk::Box::builder().spacing(18).build();
         grid.set_valign(gtk::Align::Center);
         grid.set_width_request(260);
-        row.append(&wheel);
+        row.append(&picker.custom);
         row.append(&grid);
         content.append(&row);
         popover.popup();

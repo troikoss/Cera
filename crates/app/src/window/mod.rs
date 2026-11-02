@@ -10,6 +10,7 @@
 //! - `prefs.rs`: preferences and the shortcuts list.
 
 mod bookmarks;
+mod colors;
 mod export;
 mod files;
 mod pages;

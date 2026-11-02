@@ -17,6 +17,8 @@ const RING: f32 = 22.0;
 /// Space between the ring and the square.
 const GAP: f32 = 8.0;
 const MARKER: f32 = 7.0;
+/// Corner radius of the square.
+const CORNER: f32 = 4.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Part {
@@ -93,6 +95,7 @@ mod imp {
             let left = graphene::Point::new(sq.x(), sq.y());
             let right = graphene::Point::new(sq.x() + sq.width(), sq.y());
             let bottom = graphene::Point::new(sq.x(), sq.y() + sq.height());
+            snapshot.push_rounded_clip(&gsk::RoundedRect::from_rect(sq, CORNER));
             snapshot.append_linear_gradient(
                 &sq,
                 &left,
@@ -111,6 +114,7 @@ mod imp {
                     gsk::ColorStop::new(1.0, gdk::RGBA::BLACK),
                 ],
             );
+            snapshot.pop();
 
             // Markers: a white ring with a dark edge, readable on any colour.
             let angle = h.to_radians();
@@ -138,6 +142,12 @@ impl ColorWheel {
             .build();
         wheel.imp().hsv.set(rgb_to_hsv(color));
         wheel
+    }
+
+    /// Moves the markers to `color`, without emitting a signal.
+    pub fn set_color(&self, color: Rgba8) {
+        self.imp().hsv.set(rgb_to_hsv(color));
+        self.queue_draw();
     }
 
     /// The chosen colour, opaque.
