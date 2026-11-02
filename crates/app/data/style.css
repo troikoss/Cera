@@ -32,8 +32,11 @@ label.debug-overlay {
   padding: 8px 4px;
 }
 
-.toolbar-pill button,
-.toolbar-pill toggle {
+/* Child combinators only: the tool bar's popovers are parented to it, and their buttons keep
+   the normal padding. */
+.toolbar-content > button,
+.toolbar-content > box > button,
+.toolbar-content > toggle-group > toggle {
   min-width: 40px;
   min-height: 40px;
   padding: 0;
@@ -43,12 +46,12 @@ label.debug-overlay {
 /* Separators between the groups, and between the tools inside the toggle group (those
    carry the group's orientation class, not their own). */
 .toolbar-content > separator.vertical,
-.toolbar-pill toggle-group > separator {
+.toolbar-content > toggle-group > separator {
   margin: 8px 2px;
 }
 
 .toolbar-content > separator.horizontal,
-.toolbar-pill toggle-group.vertical > separator {
+.toolbar-content > toggle-group.vertical > separator {
   margin: 2px 8px;
 }
 
